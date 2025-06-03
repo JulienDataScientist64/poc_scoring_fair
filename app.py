@@ -86,12 +86,6 @@ def download_if_missing(filename, url):
 for fname, url in ARTEFACTS.items():
     download_if_missing(fname, url)
 
-# === Import dynamique de la classe EOWrapper ===
-spec = importlib.util.spec_from_file_location("wrapper_eo", "wrapper_eo.py")
-wrapper_eo = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(wrapper_eo)
-EOWrapper = wrapper_eo.EOWrapper
-
 # === Définition des chemins ===
 RAW_DATA_FILENAME = "application_train.csv"
 MODEL_BASELINE_FILENAME = "lgbm_baseline.joblib"
@@ -132,6 +126,29 @@ def sanitize_feature_names(df_input):
     df.columns = new_columns
     return df
 
+# === FONCTION DE CHARGEMENT CACHÉE POUR EO WRAPPER ===
+@st.cache_resource
+def load_eo_wrapper_model():
+    """
+    Importe dynamiquement la classe EOWrapper et charge le modèle picklé.
+    À utiliser avant toute prédiction avec le modèle EO Wrapper.
+    """
+    # Import dynamique (obligatoire AVANT joblib.load)
+    spec = importlib.util.spec_from_file_location("wrapper_eo", "wrapper_eo.py")
+    wrapper_eo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wrapper_eo)
+    EOWrapper = wrapper_eo.EOWrapper
+    # Charge le modèle picklé
+    model = joblib.load(MODEL_WRAPPED_EO_FILENAME)
+    return model
+
+# ... Puis dans ton code principal :
+try:
+    model_eo_wrapper = load_eo_wrapper_model()
+    st.sidebar.success("EO Wrapper chargé !")
+except Exception as e:
+    st.error(f"Erreur de chargement du modèle EO Wrapper : {e}")
+    st.stop()
 # === Chargement effectif des artefacts ===
 try:
     model_baseline = load_model(MODEL_BASELINE_FILENAME)
