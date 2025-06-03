@@ -279,7 +279,7 @@ page: str = st.sidebar.radio(
 )
 if page_options.index(page) != st.session_state.current_page_index:
     st.session_state.current_page_index = page_options.index(page)
-    st.experimental_rerun() 
+    st.rerun() # CORRECTION: Remplacé st.experimental_rerun() par st.rerun()
 
 st.sidebar.markdown("---") 
 st.sidebar.info(f"Seuil Baseline : {optimal_thresh_baseline:.4f}")
