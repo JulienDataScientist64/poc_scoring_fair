@@ -16,13 +16,13 @@ import streamlit as st
 
 # --- Plotting & Visualization ---
 import plotly.express as px 
-# import plotly.graph_objects as go # Plus nécessaire pour cette version
-# import plotly.figure_factory as ff # Plus nécessaire pour cette version
+import plotly.graph_objects as go # Réintroduit pour les courbes ROC
+import plotly.figure_factory as ff # Réintroduit pour la matrice de confusion annotée
 
 # --- Fairness Libraries ---
 from fairlearn.metrics import (
-    # MetricFrame, # Plus nécessaire si on enlève les taux de sélection par groupe
-    # selection_rate as fairlearn_selection_rate, # Plus nécessaire
+    MetricFrame, # Réintroduit pour les métriques par groupe
+    selection_rate as fairlearn_selection_rate, # Réintroduit pour le taux de sélection
     demographic_parity_difference,
     equalized_odds_difference
 )
@@ -30,8 +30,8 @@ from fairlearn.metrics import (
 # --- Scikit-learn Metrics ---
 from sklearn.metrics import (
     roc_auc_score,
-    # roc_curve, # Plus nécessaire
-    # confusion_matrix, # Plus nécessaire
+    roc_curve, # Réintroduit pour la courbe ROC
+    confusion_matrix, # Réintroduit pour la matrice de confusion
     accuracy_score,
     precision_score,
     recall_score,
@@ -45,7 +45,7 @@ BASELINE_THRESHOLD_FILENAME: str = "baseline_threshold.joblib"
 MODEL_WRAPPED_EO_FILENAME: str = "eo_wrapper_with_proba.joblib"
 WRAPPER_EO_MODULE_FILENAME: str = "wrapper_eo.py"
 
-# Dictionnaire des artefacts à télécharger (X_valid et y_valid enlevés)
+# Dictionnaire des artefacts à télécharger (X_valid et y_valid réintroduits)
 ARTEFACTS: Dict[str, str] = {
     RAW_DATA_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv",
     BASELINE_THRESHOLD_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/baseline_threshold.joblib",
@@ -55,13 +55,13 @@ ARTEFACTS: Dict[str, str] = {
     "X_test_pre.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_test_pre.parquet",
     "y_test.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/y_test.parquet",
     "A_test.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/A_test.parquet",
-    # "X_valid_pre.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_valid_pre.parquet", 
-    # "y_valid.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/y_valid.parquet", 
+    "X_valid_pre.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_valid_pre.parquet", # Pour courbes ROC
+    "y_valid.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/y_valid.parquet", # Pour courbes ROC
 }
 
 # -- Streamlit config --
 st.set_page_config(
-    page_title="POC Scoring Équitable (Simplifié)", 
+    page_title="POC Scoring Équitable (Détaillé)", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -93,7 +93,7 @@ for fname, url in ARTEFACTS.items():
 def ensure_eowrapper_in_main(wrapper_file_path: str = WRAPPER_EO_MODULE_FILENAME) -> Optional[type]:
     """Charge dynamiquement EOWrapper et l'injecte dans __main__."""
     try:
-        temp_mod_name = "eowrapper_dyn_final_simplified" # Nom de module unique
+        temp_mod_name = "eowrapper_dyn_detailed_results" # Nom de module unique
         spec = importlib.util.spec_from_file_location(temp_mod_name, wrapper_file_path)
         if spec is None or spec.loader is None:
             st.error(f"Impossible de créer la spec pour le module depuis {wrapper_file_path}")
@@ -202,16 +202,17 @@ if A_test is not None:
     A_test = A_test.squeeze()
     st.sidebar.info("Données de test (A_test) chargées.")
 
-# Données de validation ne sont plus chargées pour cette version
-# X_valid_raw = load_parquet_file("X_valid_pre.parquet")
-# y_valid = load_parquet_file("y_valid.parquet")
-# X_valid = None
-# if X_valid_raw is not None:
-#     X_valid = sanitize_feature_names(X_valid_raw)
-#     st.sidebar.info("Données de validation (X_valid) nettoyées.")
-# if y_valid is not None:
-#     y_valid = y_valid.squeeze()
-#     st.sidebar.info("Données de validation (y_valid) chargées.")
+# Données de validation (pour courbes ROC)
+X_valid_raw = load_parquet_file("X_valid_pre.parquet")
+y_valid = load_parquet_file("y_valid.parquet")
+
+X_valid = None
+if X_valid_raw is not None:
+    X_valid = sanitize_feature_names(X_valid_raw)
+    st.sidebar.info("Données de validation (X_valid) nettoyées.")
+if y_valid is not None:
+    y_valid = y_valid.squeeze()
+    st.sidebar.info("Données de validation (y_valid) chargées.")
 
 
 # Chargement des données pour l'EDA
@@ -255,16 +256,18 @@ def compute_fairness_metrics(
         metrics.setdefault("EOD", np.nan)
     return metrics
 
-# === Sidebar navigation (simplifiée) ===
+# === Sidebar navigation (avec pages ROC/Probas) ===
 st.sidebar.title("📊 POC Scoring Équitable")
 page_options: List[str] = [
     "Analyse Exploratoire (EDA)",
     "Résultats & Comparaisons",
     "Prédiction sur Client Sélectionné",
+    "Courbes ROC & Probabilités - Baseline",
+    "Courbes ROC & Probabilités - EO Wrapper"
 ]
 default_page_index: int = 0
 
-session_key_page_index = "current_page_index_poc_scoring_final_simple" # Clé de session unique
+session_key_page_index = "current_page_index_poc_scoring_detailed" # Clé de session unique
 if session_key_page_index not in st.session_state:
     st.session_state[session_key_page_index] = default_page_index
 
@@ -272,7 +275,7 @@ page: str = st.sidebar.radio(
     "Navigation",
     page_options,
     index=st.session_state[session_key_page_index],
-    key="nav_radio_poc_scoring_final_simple" # Clé de widget unique
+    key="nav_radio_poc_scoring_detailed" # Clé de widget unique
 )
 if page_options.index(page) != st.session_state[session_key_page_index]:
     st.session_state[session_key_page_index] = page_options.index(page)
@@ -323,14 +326,13 @@ if page == "Analyse Exploratoire (EDA)":
         numerical_col_for_eda = 'AMT_INCOME_TOTAL' 
         if numerical_col_for_eda in df_eda_sample.columns:
             st.subheader(f"Distribution de '{numerical_col_for_eda}'")
-            # Limiter aux valeurs positives pour éviter les erreurs avec le quantile si des revenus sont <= 0
             df_positive_income = df_eda_sample[df_eda_sample[numerical_col_for_eda] > 0]
             if not df_positive_income.empty:
                 income_cap = df_positive_income[numerical_col_for_eda].quantile(0.99)
                 df_filtered_income = df_positive_income[df_positive_income[numerical_col_for_eda] < income_cap]
-            else: # Si pas de revenus positifs, prendre tout l'échantillon pour le graphique (moins idéal)
+            else: 
                 df_filtered_income = df_eda_sample
-                income_cap = df_eda_sample[numerical_col_for_eda].max()
+                income_cap = df_eda_sample[numerical_col_for_eda].max() if not df_eda_sample.empty else 0
 
 
             try:
@@ -363,14 +365,14 @@ elif page == "Résultats & Comparaisons":
             y_test_pred_b: np.ndarray = (y_test_proba_b >= optimal_thresh_baseline).astype(int)
             metrics_b: Dict[str, float] = compute_classification_metrics(y_test, y_test_pred_b, y_test_proba_b)
             fairness_b: Dict[str, float] = compute_fairness_metrics(y_test, y_test_pred_b, A_test)
-            # cm_b = confusion_matrix(y_test, y_test_pred_b) # Retiré
+            cm_b = confusion_matrix(y_test, y_test_pred_b)
             
             # Calculs pour EO Wrapper
             y_test_proba_eo: np.ndarray = model_eo_wrapper.predict_proba(X_test)[:, 1]
             y_test_pred_eo: np.ndarray = model_eo_wrapper.predict(X_test) 
             metrics_eo: Dict[str, float] = compute_classification_metrics(y_test, y_test_pred_eo, y_test_proba_eo)
             fairness_eo: Dict[str, float] = compute_fairness_metrics(y_test, y_test_pred_eo, A_test)
-            # cm_eo = confusion_matrix(y_test, y_test_pred_eo) # Retiré
+            cm_eo = confusion_matrix(y_test, y_test_pred_eo)
 
             st.subheader("Tableau récapitulatif des métriques")
             df_res = pd.DataFrame([
@@ -379,13 +381,54 @@ elif page == "Résultats & Comparaisons":
             ])
             st.dataframe(df_res.set_index("Modèle").style.format("{:.3f}", na_rep="-"), use_container_width=True)
             
-            # Section Matrices de Confusion retirée
-            # st.subheader("Matrices de Confusion")
-            # ... code pour les matrices de confusion ...
+            st.subheader("Matrices de Confusion")
+            col1_cm, col2_cm = st.columns(2)
+            labels_cm = ['Non-Défaut (0)', 'Défaut (1)']
+            
+            with col1_cm:
+                st.markdown("**Modèle Baseline**")
+                z_text_b = [[str(y) for y in x] for x in cm_b]
+                fig_cm_b = ff.create_annotated_heatmap(cm_b, x=labels_cm, y=labels_cm, annotation_text=z_text_b, colorscale='Blues')
+                fig_cm_b.update_layout(title_text="<i>Baseline</i>", xaxis_title="Prédit", yaxis_title="Réel")
+                st.plotly_chart(fig_cm_b, use_container_width=True)
 
-            # Section Taux de Sélection par Groupe retirée
-            # st.subheader("Taux de Sélection par Groupe (sur feature sensible)")
-            # ... code pour les taux de sélection ...
+            with col2_cm:
+                st.markdown("**Modèle EO Wrapper**")
+                z_text_eo = [[str(y) for y in x] for x in cm_eo]
+                fig_cm_eo = ff.create_annotated_heatmap(cm_eo, x=labels_cm, y=labels_cm, annotation_text=z_text_eo, colorscale='Greens')
+                fig_cm_eo.update_layout(title_text="<i>EO Wrapper</i>", xaxis_title="Prédit", yaxis_title="Réel")
+                st.plotly_chart(fig_cm_eo, use_container_width=True)
+
+            st.subheader("Taux de Sélection par Groupe (sur feature sensible)")
+            mf_selection_baseline = MetricFrame(metrics=fairlearn_selection_rate,
+                                                y_true=y_test, 
+                                                y_pred=y_test_pred_b,
+                                                sensitive_features=A_test)
+            
+            mf_selection_eo = MetricFrame(metrics=fairlearn_selection_rate,
+                                          y_true=y_test,
+                                          y_pred=y_test_pred_eo,
+                                          sensitive_features=A_test)
+
+            df_selection_rates = pd.DataFrame({
+                "Groupe Sensible": mf_selection_baseline.by_group.index,
+                "Taux Sélection Baseline": mf_selection_baseline.by_group.values,
+                "Taux Sélection EO Wrapper": mf_selection_eo.by_group.values
+            }).set_index("Groupe Sensible")
+            
+            st.dataframe(df_selection_rates.style.format("{:.3f}"), use_container_width=True)
+            
+            df_selection_plot = df_selection_rates.reset_index().melt(
+                id_vars="Groupe Sensible", 
+                value_vars=["Taux Sélection Baseline", "Taux Sélection EO Wrapper"],
+                var_name="Modèle", 
+                value_name="Taux de Sélection"
+            )
+            fig_sr = px.bar(df_selection_plot, x="Groupe Sensible", y="Taux de Sélection", 
+                            color="Modèle", barmode="group",
+                            title="Taux de Sélection par Groupe et Modèle",
+                            labels={"Groupe Sensible": "Groupe (Feature Sensible)", "Taux de Sélection": "Taux d'approbation"})
+            st.plotly_chart(fig_sr, use_container_width=True)
 
         except Exception as e:
             st.error(f"Erreur lors du calcul ou de l'affichage des résultats comparatifs: {e}")
@@ -462,14 +505,94 @@ elif page == "Prédiction sur Client Sélectionné":
     else:
         st.warning("Des éléments sont manquants pour effectuer une prédiction : modèles ou données de test.")
 
-# Les pages pour les courbes ROC et distributions de probabilités ont été retirées.
-# elif page == "Courbes ROC & Probabilités - Baseline":
-# ...
+elif page == "Courbes ROC & Probabilités - Baseline":
+    st.header("Courbes ROC & Distribution des Probabilités - Modèle Baseline")
+    st.caption("Calculé sur le jeu de validation.")
 
-# elif page == "Courbes ROC & Probabilités - EO Wrapper":
-# ...
+    if model_baseline is not None and X_valid is not None and y_valid is not None and optimal_thresh_baseline is not None:
+        try:
+            y_val_proba_b: np.ndarray = model_baseline.predict_proba(X_valid)[:, 1]
+            fpr, tpr, thresholds_roc = roc_curve(y_valid, y_val_proba_b)
+            auc_b_val: float = roc_auc_score(y_valid, y_val_proba_b)
+
+            fig_roc = go.Figure()
+            fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=f'ROC Baseline (AUC={auc_b_val:.3f})', line=dict(color='blue')))
+            fig_roc.add_shape(type='line', x0=0, x1=1, y0=0, y1=1, line=dict(dash='dash', color='grey'))
+            
+            optimal_idx_val = np.argmin(np.abs(thresholds_roc - optimal_thresh_baseline))
+            fig_roc.add_trace(go.Scatter(
+                x=[fpr[optimal_idx_val]], y=[tpr[optimal_idx_val]], mode='markers',
+                marker=dict(size=10, color='red'), name=f'Seuil Optimal ({optimal_thresh_baseline:.3f})'
+            ))
+            fig_roc.update_layout(title_text="Courbe ROC - Modèle Baseline (Validation)",
+                                  xaxis_title="Taux de Faux Positifs (FPR)",
+                                  yaxis_title="Taux de Vrais Positifs (TPR)",
+                                  legend_title_text="Légende")
+            st.plotly_chart(fig_roc, use_container_width=True)
+
+            st.subheader("Distribution des Scores de Probabilité (Baseline, Validation)")
+            df_dist_b = pd.DataFrame({"proba_baseline": y_val_proba_b, "y_true": y_valid.astype(str)}) 
+            fig_dist_b = px.histogram(df_dist_b, x="proba_baseline", color="y_true", nbins=50,
+                                      barmode='overlay', marginal="rug",
+                                      title="Distribution des Scores (Baseline)",
+                                      labels={"proba_baseline": "Score Prédit (Baseline)", "y_true": "Vraie Cible"},
+                                      color_discrete_map={'0': 'green', '1': 'red'} 
+                                     )
+            fig_dist_b.add_vline(x=optimal_thresh_baseline, line_color="black", line_dash="dash", 
+                                annotation_text=f"Seuil={optimal_thresh_baseline:.3f}", annotation_position="top right")
+            st.plotly_chart(fig_dist_b, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Erreur lors de la génération des graphiques pour Baseline (Validation): {e}")
+            st.exception(e)
+    else:
+        st.warning("Modèle Baseline, données de validation ou seuil non chargés.")
+
+elif page == "Courbes ROC & Probabilités - EO Wrapper":
+    st.header("Courbes ROC & Distribution des Probabilités - Modèle EO Wrapper")
+    st.caption("Calculé sur le jeu de validation.")
+
+    if model_eo_wrapper is not None and hasattr(model_eo_wrapper, 'threshold') and \
+       X_valid is not None and y_valid is not None:
+        try:
+            wrapper_threshold = model_eo_wrapper.threshold
+            y_val_proba_eo: np.ndarray = model_eo_wrapper.predict_proba(X_valid)[:, 1]
+            fpr_eo, tpr_eo, thresholds_roc_eo = roc_curve(y_valid, y_val_proba_eo)
+            auc_eo_val: float = roc_auc_score(y_valid, y_val_proba_eo)
+
+            fig_roc_eo = go.Figure()
+            fig_roc_eo.add_trace(go.Scatter(x=fpr_eo, y=tpr_eo, mode='lines', name=f'ROC EO Wrapper (AUC={auc_eo_val:.3f})', line=dict(color='green')))
+            fig_roc_eo.add_shape(type='line', x0=0, x1=1, y0=0, y1=1, line=dict(dash='dash', color='grey'))
+            
+            optimal_idx_eo_val = np.argmin(np.abs(thresholds_roc_eo - wrapper_threshold))
+            fig_roc_eo.add_trace(go.Scatter(
+                x=[fpr_eo[optimal_idx_eo_val]], y=[tpr_eo[optimal_idx_eo_val]], mode='markers',
+                marker=dict(size=10, color='orange'), name=f'Seuil du Wrapper ({wrapper_threshold:.3f})'
+            ))
+            fig_roc_eo.update_layout(title_text="Courbe ROC - Modèle EO Wrapper (Validation)",
+                                     xaxis_title="Taux de Faux Positifs (FPR)",
+                                     yaxis_title="Taux de Vrais Positifs (TPR)",
+                                     legend_title_text="Légende")
+            st.plotly_chart(fig_roc_eo, use_container_width=True)
+
+            st.subheader("Distribution des Scores de Probabilité (EO Wrapper, Validation)")
+            df_dist_eo = pd.DataFrame({"proba_eo": y_val_proba_eo, "y_true": y_valid.astype(str)}) 
+            fig_dist_eo = px.histogram(df_dist_eo, x="proba_eo", color="y_true", nbins=50, 
+                                       barmode='overlay', marginal="rug",
+                                       title="Distribution des Scores (EO Wrapper)",
+                                       labels={"proba_eo": "Score Prédit (EO Wrapper)", "y_true": "Vraie Cible"},
+                                       color_discrete_map={'0': 'green', '1': 'red'}
+                                      )
+            fig_dist_eo.add_vline(x=wrapper_threshold, line_color="black", line_dash="dash",
+                                  annotation_text=f"Seuil={wrapper_threshold:.3f}", annotation_position="top right")
+            st.plotly_chart(fig_dist_eo, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erreur lors de la génération des graphiques pour EO Wrapper (Validation): {e}")
+            st.exception(e)
+    else:
+        st.warning("Modèle EO Wrapper, son seuil, ou données de validation non chargés.")
 
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Version simplifiée avec EDA, résultats (tableau) et prédiction client.")
+st.sidebar.caption("Version avec EDA, résultats détaillés, prédiction client et courbes ROC.")
 
