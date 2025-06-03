@@ -27,7 +27,11 @@ from sklearn.metrics import (
     recall_score,
     f1_score
 )
-
+st.set_page_config(
+    page_title="POC Scoring Crédit Équitable",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 # === Chemins & artefacts Hugging Face ===
 ARTEFACTS = {
     "application_train.csv": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv",
