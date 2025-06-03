@@ -94,34 +94,23 @@ def get_ewrapper_class(wrapper_file_path="wrapper_eo.py"):
     Dynamically imports and returns the EOWrapper class from the specified file.
     Caches the result to ensure the class object is stable across Streamlit reruns.
     """
-    # Using a potentially unique module name for clarity in logs, though cache_resource handles identity.
     module_name = "wrapper_eo_module_cached_by_streamlit" 
     
     st.info(f"Attempting dynamic import of EOWrapper from '{wrapper_file_path}' as module '{module_name}'.")
     
     if not os.path.exists(wrapper_file_path):
-        # This check is crucial before attempting spec_from_file_location.
         raise FileNotFoundError(f"Wrapper file '{wrapper_file_path}' not found. Ensure it's downloaded and path is correct.")
 
     spec = importlib.util.spec_from_file_location(module_name, wrapper_file_path)
     
-    if spec is None: # spec_from_file_location can return None if file doesn't exist or isn't accessible
+    if spec is None: 
         raise ImportError(f"Could not create module spec for '{wrapper_file_path}'. File might be inaccessible or not a Python module.")
-    if spec.loader is None: # Should be caught by spec is None, but as a safeguard.
+    if spec.loader is None: 
         raise ImportError(f"Module spec for '{wrapper_file_path}' has no loader. Cannot execute module.")
         
-    # Create a new module object or get from sys.modules if already imported by this exact mechanism
-    # Note: @st.cache_resource ensures this function's body effectively runs once for the same inputs.
     _wrapper_eo_module = importlib.util.module_from_spec(spec)
-    
-    # Add to sys.modules BEFORE exec_module. This is important for pickle to find the module
-    # if it was pickled with this module_name.
-    # However, the name `wrapper_eo_module_cached_by_streamlit` is internal to this import.
-    # The pickled object likely refers to `wrapper_eo.EOWrapper` or `__main__.EOWrapper`.
-    # The key is that `EOWrapper_class_global` will hold THE SAME class object across reruns.
     sys.modules[module_name] = _wrapper_eo_module 
-    
-    spec.loader.exec_module(_wrapper_eo_module) # Execute the module code to define the class
+    spec.loader.exec_module(_wrapper_eo_module) 
     
     if not hasattr(_wrapper_eo_module, "EOWrapper"):
         raise AttributeError(f"Module '{module_name}' (from '{wrapper_file_path}') does not define class 'EOWrapper'.")
@@ -164,20 +153,16 @@ def load_model_joblib(path):
     return joblib.load(path)
 
 def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
-    df = df_input.copy()
-    new_columns = []
-    counts = {} 
-    for col in df.columns:
-        new_col = str(col)
-        new_col = re.sub(r"[^a-zA-Z0-9_]", "_", new_col)
-        if new_col in counts:
-            counts[new_col] += 1
-            final_col = f"{new_col}_{counts[new_col]}"
-        else:
-            counts[new_col] = 0 
-            final_col = new_col
-        new_columns.append(final_col)
-    df.columns = new_columns
+    """
+    Nettoie les noms de colonnes pour correspondre à la logique de `clean_feature_names` 
+    utilisée lors de l'entraînement (version simplifiée sans gestion des doublons post-nettoyage).
+    Remplace les caractères non alphanumériques ou underscore par un underscore.
+    """
+    df = df_input.copy() # Travailler sur une copie pour éviter les effets de bord
+    # Appliquer la logique de nettoyage simple (comme dans la fonction clean_feature_names fournie)
+    # La regex [^a-zA-Z0-9_] était déjà utilisée et est équivalente à [^0-9a-zA-Z_]
+    cleaned_columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(col)) for col in df.columns]
+    df.columns = cleaned_columns
     return df
 
 # === Chargement effectif des artefacts ===
@@ -227,7 +212,6 @@ if EOWrapper_class_global is not None:
         st.exception(e)
         st.stop()
 else:
-    # This case should ideally be caught by the st.stop() in the EOWrapper_class_global try-except block.
     st.error("La classe EOWrapper (EOWrapper_class_global) n'a pas pu être initialisée. Impossible de charger le modèle EO Wrapper.")
     st.stop()
 
@@ -433,16 +417,13 @@ elif page == "Analyse Exploratoire":
 
 elif page == "Résultats & Comparaisons":
     st.header("📊 Résultats comparatifs sur jeu de test")
-    # Ensure models and data are loaded before attempting predictions
     if model_baseline is not None and model_eo_wrapper is not None and X_test is not None and y_test is not None and A_test is not None:
         try:
-            # Baseline
             y_test_proba_b = model_baseline.predict_proba(X_test)[:, 1]
             y_test_pred_b = (y_test_proba_b >= optimal_thresh_baseline).astype(int)
             metrics_b = compute_classification_metrics(y_test, y_test_pred_b, y_test_proba_b)
             fairness_b = compute_fairness_metrics(y_test, y_test_pred_b, A_test)
             
-            # EO Wrapper
             y_test_proba_eo = model_eo_wrapper.predict_proba(X_test)[:, 1] 
             y_test_pred_eo = model_eo_wrapper.predict(X_test) 
             metrics_eo = compute_classification_metrics(y_test, y_test_pred_eo, y_test_proba_eo)
