@@ -79,13 +79,6 @@ BASELINE_THRESHOLD_FILENAME = "baseline_threshold.joblib"
 MODEL_WRAPPED_EO_FILENAME = "eo_wrapper_with_proba.joblib"
 SPLITS_DIR = ""  # splits à la racine
 
-# === Page config Streamlit ===
-st.set_page_config(
-    page_title="POC Scoring Crédit Équitable",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # === Fonctions de chargement / cache Streamlit ===
 @st.cache_data
 def load_parquet_file(path):
