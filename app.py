@@ -144,6 +144,7 @@ st.set_page_config(
 # ——————————————————————————————————————————————————————————————
 # NAVIGATION (BARRE LATÉRALE)
 # ——————————————————————————————————————————————————————————————
+
 st.sidebar.title("📊 POC Scoring Équitable")
 page_options: List[str] = [
     "Analyse Exploratoire (EDA)",
@@ -155,9 +156,11 @@ page_options: List[str] = [
 default_page_index: int = 0
 session_key_page_index = "current_page_index_poc_scoring_roc_conf"
 
+# Initialisation si nécessaire
 if session_key_page_index not in st.session_state:
     st.session_state[session_key_page_index] = default_page_index
 
+# On affiche le radio, avec la valeur actuelle dans session_state
 page: str = st.sidebar.radio(
     "Navigation",
     page_options,
@@ -165,10 +168,10 @@ page: str = st.sidebar.radio(
     key="nav_radio_poc_scoring_roc_conf",
 )
 
+# Si la sélection a changé, on met simplement à jour session_state.
+# Streamlit va recharger/rafraîchir le script automatiquement, donc on n’a pas besoin de st.experimental_rerun().
 if page_options.index(page) != st.session_state[session_key_page_index]:
     st.session_state[session_key_page_index] = page_options.index(page)
-    st.experimental_rerun()
-
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Exploratoire (EDA)
