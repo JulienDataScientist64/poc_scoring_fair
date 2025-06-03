@@ -2,7 +2,7 @@ import os
 import re
 import requests
 import importlib.util
-import sys # For debugging module paths if necessary
+import sys
 
 import streamlit as st
 import pandas as pd
@@ -13,7 +13,7 @@ import plotly.express as px
 import shap
 import dalex as dx
 
-from fairlearn.reductions import ExponentiatedGradient # Bien que non utilisé directement ici, EOWrapper en dépend
+from fairlearn.reductions import ExponentiatedGradient  # EO Wrapper en dépend
 from fairlearn.metrics import (
     MetricFrame,
     selection_rate as fairlearn_selection_rate,
@@ -29,33 +29,18 @@ from sklearn.metrics import (
     f1_score
 )
 
-# Configuration de la page Streamlit
-st.set_page_config(
-    page_title="POC Scoring Crédit Équitable",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- CHEMINS ET CONSTANTES ---
+RAW_DATA_FILENAME = "application_train.csv"
+MODEL_BASELINE_FILENAME = "lgbm_baseline.joblib"
+BASELINE_THRESHOLD_FILENAME = "baseline_threshold.joblib"
+MODEL_WRAPPED_EO_FILENAME = "eo_wrapper_with_proba.joblib"
 
-# Note about potential OS-level errors
-st.sidebar.caption("""
-    Note: If you encounter 'OSError: [Errno 28] inotify watch limit reached', 
-    it's an OS limit. On systems you control, you can increase this limit. 
-    Alternatively, for Streamlit, consider setting `server.fileWatcherType = "none"` 
-    in your Streamlit config if frequent file watching isn't needed.
-""")
-
-
-# Récupération du token Hugging Face depuis les secrets Streamlit
-HF_TOKEN = st.secrets.get("HF_TOKEN", None)
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-
-# === Chemins & artefacts Hugging Face ===
 # Dictionnaire des artefacts à télécharger
 ARTEFACTS = {
-    "application_train.csv": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv",
-    "baseline_threshold.joblib": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/baseline_threshold.joblib",
-    "eo_wrapper_with_proba.joblib": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/eo_wrapper_with_proba.joblib",
-    "lgbm_baseline.joblib": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/lgbm_baseline.joblib",
+    RAW_DATA_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv",
+    BASELINE_THRESHOLD_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/baseline_threshold.joblib",
+    MODEL_WRAPPED_EO_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/eo_wrapper_with_proba.joblib",
+    MODEL_BASELINE_FILENAME: "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/lgbm_baseline.joblib",
     "wrapper_eo.py": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/wrapper_eo.py",
     "X_valid_pre.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_valid_pre.parquet",
     "y_valid.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/y_valid.parquet",
@@ -65,12 +50,30 @@ ARTEFACTS = {
     "A_test.parquet": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/A_test.parquet"
 }
 
+# -- Streamlit config --
+st.set_page_config(
+    page_title="POC Scoring Crédit Équitable",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.sidebar.caption("""
+    Note: If you encounter 'OSError: [Errno 28] inotify watch limit reached', 
+    it's an OS limit. On systems you control, you can increase this limit. 
+    Alternatively, for Streamlit, consider setting `server.fileWatcherType = "none"` 
+    in your Streamlit config if frequent file watching isn't needed.
+""")
+
+# -- Token Hugging Face pour API privée si besoin --
+HF_TOKEN = st.secrets.get("HF_TOKEN", None)
+HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+
 def download_if_missing(filename, url):
     """Télécharge le fichier depuis Hugging Face si absent localement, en utilisant les HEADERS si définis."""
     if not os.path.exists(filename):
         st.info(f"Téléchargement de {filename} depuis Hugging Face...")
         try:
-            with requests.get(url, stream=True, headers=HEADERS) as r: # Utilisation de HEADERS
+            with requests.get(url, stream=True, headers=HEADERS) as r:
                 r.raise_for_status()
                 with open(filename, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
@@ -82,70 +85,27 @@ def download_if_missing(filename, url):
                 st.error(f"Réponse du serveur: {e.response.status_code} - {e.response.text}")
             st.stop()
 
-# --- Téléchargement de tous les artefacts nécessaires depuis Hugging Face ---
+# --- Téléchargement des artefacts au lancement ---
 for fname, url in ARTEFACTS.items():
     download_if_missing(fname, url)
 
-
-# === Import dynamique de la classe EOWrapper (mis en cache) ===
-@st.cache_resource
-def get_ewrapper_class(wrapper_file_path="wrapper_eo.py"):
+# --- Patch dynamique de la classe EOWrapper AVANT joblib.load ---
+def ensure_eowrapper_in_main(wrapper_file_path="wrapper_eo.py"):
     """
-    Dynamically imports the EOWrapper class from the specified file.
-    The class definition's __module__ attribute is set to '__main__', 
-    and the class is then set as an attribute on the __main__ module
-    (this app.py script when run by Streamlit) to allow pickle to find it.
-    Caches the class definition to ensure it's stable across Streamlit reruns.
+    Charge dynamiquement la classe EOWrapper depuis wrapper_eo.py
+    et l'injecte dans le module __main__ avec le bon __module__.
+    Ceci est nécessaire pour permettre à joblib/pickle de désérialiser les objets picklés
+    (comme le modèle EO Wrapper) sur toutes les pages Streamlit.
     """
-    st.info(f"Attempting to make EOWrapper class from '{wrapper_file_path}' available to __main__ module.")
-    
-    if not os.path.exists(wrapper_file_path):
-        raise FileNotFoundError(f"Wrapper file '{wrapper_file_path}' not found. Ensure it's downloaded and path is correct.")
-
-    temp_module_load_name = f"temp_loader_for_{os.path.basename(wrapper_file_path).replace('.', '_')}"
-    
-    spec = importlib.util.spec_from_file_location(temp_module_load_name, wrapper_file_path)
-    
-    if spec is None: 
-        raise ImportError(f"Could not create module spec for '{wrapper_file_path}' (intended for temporary loading as '{temp_module_load_name}').")
-    if spec.loader is None: 
-        raise ImportError(f"Module spec for '{temp_module_load_name}' (from '{wrapper_file_path}') has no loader.")
-        
-    _temp_wrapper_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(_temp_wrapper_module) 
-    
-    if not hasattr(_temp_wrapper_module, "EOWrapper"):
-        raise AttributeError(f"Module temporarily loaded from '{wrapper_file_path}' (as '{temp_module_load_name}') does not define the class 'EOWrapper'.")
-        
-    actual_class_definition = getattr(_temp_wrapper_module, "EOWrapper")
-    
-    # CRUCIAL MODIFICATION: Make the class believe it was defined in __main__
-    actual_class_definition.__module__ = '__main__'
-    
-    main_module = sys.modules['__main__']
-    setattr(main_module, 'EOWrapper', actual_class_definition)
-    
-    st.info(f"EOWrapper class definition from '{wrapper_file_path}' has been set as 'EOWrapper' on the __main__ module ('{main_module.__name__}'). Its __module__ attribute is now '{actual_class_definition.__module__}'.")
-    st.info(f"Class type: {type(actual_class_definition)}, Class ID: {id(actual_class_definition)}")
-    
-    return actual_class_definition
-
-EOWrapper_class_global = None 
-try:
-    EOWrapper_class_global = get_ewrapper_class("wrapper_eo.py") 
-    st.sidebar.success("Classe EOWrapper prête et configurée pour __main__.")
-except Exception as e:
-    st.error(f"Erreur critique lors de l'obtention et de la configuration de la classe EOWrapper: {e}")
-    st.info("L'application ne peut pas continuer sans la classe EOWrapper.")
-    st.exception(e) 
-    st.stop()
-
-
-# === Définition des chemins (après téléchargement) ===
-RAW_DATA_FILENAME = "application_train.csv"
-MODEL_BASELINE_FILENAME = "lgbm_baseline.joblib"
-BASELINE_THRESHOLD_FILENAME = "baseline_threshold.joblib"
-MODEL_WRAPPED_EO_FILENAME = "eo_wrapper_with_proba.joblib"
+    import importlib.util, sys
+    temp_mod_name = "eowrapper_dyn"
+    spec = importlib.util.spec_from_file_location(temp_mod_name, wrapper_file_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cls = getattr(module, "EOWrapper")
+    cls.__module__ = "__main__"
+    setattr(sys.modules["__main__"], "EOWrapper", cls)
+    return cls
 
 # === Fonctions de chargement / cache Streamlit ===
 @st.cache_data
@@ -165,16 +125,12 @@ def load_model_joblib(path):
     return joblib.load(path)
 
 def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
-    df = df_input.copy() 
+    df = df_input.copy()
     cleaned_columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(col)) for col in df.columns]
     df.columns = cleaned_columns
     return df
 
-# === Chargement effectif des artefacts ===
-model_baseline = None
-optimal_thresh_baseline = 0.5 
-model_eo_wrapper = None
-
+# === Chargement effectif des modèles ===
 try:
     model_baseline = load_model_joblib(MODEL_BASELINE_FILENAME)
     st.sidebar.success("Modèle baseline chargé !")
@@ -189,44 +145,44 @@ except Exception as e:
     st.warning(f"Seuil baseline ('{BASELINE_THRESHOLD_FILENAME}') non trouvé ou erreur. Fallback à 0.5. Erreur: {e}")
     optimal_thresh_baseline = 0.5
 
-if EOWrapper_class_global is not None: 
-    try:
-        model_eo_wrapper = load_model_joblib(MODEL_WRAPPED_EO_FILENAME)
-        
-        st.info(f"--- Debugging EOWrapper isinstance after loading '{MODEL_WRAPPED_EO_FILENAME}' ---")
-        loaded_class = type(model_eo_wrapper)
-        st.info(f"Type of 'model_eo_wrapper' chargé: {loaded_class}")
-        st.info(f"Module de 'model_eo_wrapper': {loaded_class.__module__}") 
-        st.info(f"Nom de classe de 'model_eo_wrapper': {loaded_class.__name__}") 
-        st.info(f"ID de la classe de 'model_eo_wrapper': {id(loaded_class)}")
-        
-        st.info(f"Type de 'EOWrapper_class_global' (définition de référence): {EOWrapper_class_global}")
-        st.info(f"Module de 'EOWrapper_class_global': {EOWrapper_class_global.__module__}") 
-        st.info(f"Nom de 'EOWrapper_class_global': {EOWrapper_class_global.__name__}")
-        st.info(f"ID de 'EOWrapper_class_global': {id(EOWrapper_class_global)}")
-        
-        if not isinstance(model_eo_wrapper, EOWrapper_class_global):
-            st.error(f"L'objet chargé depuis '{MODEL_WRAPPED_EO_FILENAME}' n'est pas une instance de la classe EOWrapper de référence (EOWrapper_class_global).")
-            st.error(f"ID de la classe chargée: {id(loaded_class)}, ID de la classe de référence: {id(EOWrapper_class_global)}.")
-            st.error("Cela peut se produire si la définition de la classe EOWrapper dans 'wrapper_eo.py' a changé depuis la création du fichier .joblib, ou si la mise en cache/injection de la classe dans __main__ n'est pas parfaitement alignée avec les attentes de pickle.")
-            st.stop()
-        st.sidebar.success("EO Wrapper chargé et vérifié !")
-    except AttributeError as ae: 
-        st.error(f"AttributeError lors du chargement de '{MODEL_WRAPPED_EO_FILENAME}': {ae}")
-        st.error("Cela indique que pickle n'a pas pu trouver l'attribut (probablement la classe EOWrapper) dans le module attendu (probablement '__main__').")
-        st.error("Vérifiez que `get_ewrapper_class` a correctement défini `EOWrapper` sur `sys.modules['__main__']` et que son attribut `__module__` est aussi '__main__'.")
-        st.exception(ae)
-        st.stop()
-    except Exception as e: 
-        st.error(f"Erreur générale de chargement du modèle EO Wrapper ('{MODEL_WRAPPED_EO_FILENAME}'): {e}")
-        st.exception(e)
-        st.stop()
-else:
-    st.error("La classe EOWrapper (EOWrapper_class_global) n'a pas pu être initialisée. Impossible de charger le modèle EO Wrapper.")
+try:
+    # 1. Toujours repatcher AVANT de charger le wrapper
+    ensure_eowrapper_in_main("wrapper_eo.py")
+    # 2. Charger le wrapper
+    model_eo_wrapper = load_model_joblib(MODEL_WRAPPED_EO_FILENAME)
+    st.sidebar.success("EO Wrapper chargé et prêt !")
+except Exception as e:
+    st.error(f"Erreur de chargement du modèle EO Wrapper ('{MODEL_WRAPPED_EO_FILENAME}') : {e}")
+    st.exception(e)
     st.stop()
 
-# Données de validation et de test
-X_valid_raw, y_valid, A_valid, X_test_raw, y_test, A_test = None, None, None, None, None, None
+
+# --- Chargement effectif des artefacts modèles ---
+try:
+    model_baseline = load_model_joblib(MODEL_BASELINE_FILENAME)
+    st.sidebar.success("Modèle baseline chargé !")
+except Exception as e:
+    st.error(f"Erreur de chargement du modèle baseline ('{MODEL_BASELINE_FILENAME}'): {e}")
+    st.stop()
+
+try:
+    optimal_thresh_baseline = load_model_joblib(BASELINE_THRESHOLD_FILENAME)
+    st.sidebar.info(f"Seuil optimal baseline : {optimal_thresh_baseline:.3f}")
+except Exception as e:
+    st.warning(f"Seuil baseline ('{BASELINE_THRESHOLD_FILENAME}') non trouvé ou erreur. Fallback à 0.5. Erreur: {e}")
+    optimal_thresh_baseline = 0.5
+
+try:
+    # Patch de la classe à CHAQUE RUN/RERUN (indispensable pour la stabilité sur toutes les pages)
+    ensure_eowrapper_in_main("wrapper_eo.py")
+    model_eo_wrapper = load_model_joblib(MODEL_WRAPPED_EO_FILENAME)
+    st.sidebar.success("EO Wrapper chargé et prêt !")
+except Exception as e:
+    st.error(f"Erreur de chargement du modèle EO Wrapper ('{MODEL_WRAPPED_EO_FILENAME}') : {e}")
+    st.exception(e)
+    st.stop()
+
+# --- Chargement des jeux de données test et validation ---
 try:
     X_valid_raw = load_parquet_file("X_valid_pre.parquet")
     y_valid = load_parquet_file("y_valid.parquet").squeeze()
@@ -239,8 +195,7 @@ except Exception as e:
     st.error(f"Erreur de chargement des splits de données (Parquet) : {e}")
     st.stop()
 
-# Nettoyage des noms de features pour X_valid et X_test
-X_valid, X_test = None, None
+# --- Nettoyage des noms de features ---
 try:
     X_valid = sanitize_feature_names(X_valid_raw)
     X_test = sanitize_feature_names(X_test_raw)
@@ -252,6 +207,7 @@ try:
 except Exception as e:
     st.error(f"Erreur lors du nettoyage des noms de features : {e}")
     st.stop()
+
 
 # EDA brute pour analyse (échantillon)
 df_eda_raw_sample = None 
@@ -308,8 +264,7 @@ else:
     st.sidebar.warning("Seuil EO Wrapper non disponible ou modèle non chargé.")
 
 
-# === Contenu des Pages === (Reste inchangé, voir versions précédentes)
-
+# === Contenu des Pages === 
 if page == "Contexte & Objectifs":
     st.header("Contexte & Références")
     st.markdown(
