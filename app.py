@@ -93,34 +93,48 @@ def get_ewrapper_class(wrapper_file_path="wrapper_eo.py"):
     """
     Dynamically imports and returns the EOWrapper class from the specified file.
     Caches the result to ensure the class object is stable across Streamlit reruns.
+    The module is registered in sys.modules with the name 'wrapper_eo' to match
+    how it was likely pickled.
     """
-    module_name = "wrapper_eo_module_cached_by_streamlit" 
+    # This is the module name pickle likely expects based on the error message.
+    expected_module_name = "wrapper_eo" 
     
-    st.info(f"Attempting dynamic import of EOWrapper from '{wrapper_file_path}' as module '{module_name}'.")
+    st.info(f"Attempting dynamic import of EOWrapper from '{wrapper_file_path}' as module '{expected_module_name}'.")
     
     if not os.path.exists(wrapper_file_path):
         raise FileNotFoundError(f"Wrapper file '{wrapper_file_path}' not found. Ensure it's downloaded and path is correct.")
 
-    spec = importlib.util.spec_from_file_location(module_name, wrapper_file_path)
+    # If the module is already in sys.modules with the correct name and it's the one we want,
+    # this process might still re-evaluate it if not handled carefully.
+    # However, @st.cache_resource ensures this function's core logic runs once.
+    
+    spec = importlib.util.spec_from_file_location(expected_module_name, wrapper_file_path)
     
     if spec is None: 
-        raise ImportError(f"Could not create module spec for '{wrapper_file_path}'. File might be inaccessible or not a Python module.")
+        raise ImportError(f"Could not create module spec for '{wrapper_file_path}' (intended as '{expected_module_name}'). File might be inaccessible or not a Python module.")
     if spec.loader is None: 
-        raise ImportError(f"Module spec for '{wrapper_file_path}' has no loader. Cannot execute module.")
+        raise ImportError(f"Module spec for '{expected_module_name}' (from '{wrapper_file_path}') has no loader. Cannot execute module.")
         
+    # Create a new module object based on the spec.
     _wrapper_eo_module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = _wrapper_eo_module 
+    
+    # CRUCIAL: Register this module in sys.modules with the name 'wrapper_eo'.
+    # This allows pickle to find the class definition within this module during unpickling.
+    sys.modules[expected_module_name] = _wrapper_eo_module 
+    
+    # Execute the module's code, which should define the EOWrapper class within _wrapper_eo_module.
     spec.loader.exec_module(_wrapper_eo_module) 
     
     if not hasattr(_wrapper_eo_module, "EOWrapper"):
-        raise AttributeError(f"Module '{module_name}' (from '{wrapper_file_path}') does not define class 'EOWrapper'.")
+        raise AttributeError(f"Module '{expected_module_name}' (loaded from '{wrapper_file_path}') does not define the class 'EOWrapper'.")
         
     actual_class = getattr(_wrapper_eo_module, "EOWrapper")
-    st.info(f"EOWrapper class imported successfully. Module: {actual_class.__module__}, Name: {actual_class.__name__}, ID: {id(actual_class)}")
+    st.info(f"EOWrapper class imported/defined. Module: {actual_class.__module__} (should be '{expected_module_name}'), Name: {actual_class.__name__}, ID: {id(actual_class)}")
     return actual_class
 
 EOWrapper_class_global = None 
 try:
+    # This call ensures EOWrapper is defined and sys.modules['wrapper_eo'] points to our loaded module.
     EOWrapper_class_global = get_ewrapper_class("wrapper_eo.py") 
     st.sidebar.success("Classe EOWrapper prête.")
 except Exception as e:
@@ -150,24 +164,24 @@ def load_csv_sample(filename, sample_frac=0.3):
 
 @st.cache_resource
 def load_model_joblib(path):
+    """Loads a model using joblib.load. 
+       Relies on EOWrapper_class_global being correctly set up in sys.modules
+       if the model is an EOWrapper instance.
+    """
+    st.info(f"Attempting to load model from {path} using joblib.load().")
+    # The EOWrapper class should already be defined and available in sys.modules['wrapper_eo']
+    # due to the prior call to get_ewrapper_class().
     return joblib.load(path)
 
 def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
-    """
-    Nettoie les noms de colonnes pour correspondre à la logique de `clean_feature_names` 
-    utilisée lors de l'entraînement (version simplifiée sans gestion des doublons post-nettoyage).
-    Remplace les caractères non alphanumériques ou underscore par un underscore.
-    """
-    df = df_input.copy() # Travailler sur une copie pour éviter les effets de bord
-    # Appliquer la logique de nettoyage simple (comme dans la fonction clean_feature_names fournie)
-    # La regex [^a-zA-Z0-9_] était déjà utilisée et est équivalente à [^0-9a-zA-Z_]
+    df = df_input.copy() 
     cleaned_columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(col)) for col in df.columns]
     df.columns = cleaned_columns
     return df
 
 # === Chargement effectif des artefacts ===
 model_baseline = None
-optimal_thresh_baseline = 0.5 # Default fallback
+optimal_thresh_baseline = 0.5 
 model_eo_wrapper = None
 
 try:
@@ -184,12 +198,13 @@ except Exception as e:
     st.warning(f"Seuil baseline ('{BASELINE_THRESHOLD_FILENAME}') non trouvé ou erreur. Fallback à 0.5. Erreur: {e}")
     optimal_thresh_baseline = 0.5
 
-if EOWrapper_class_global is not None:
+if EOWrapper_class_global is not None: # Should always be true if no st.stop() before
     try:
+        # This call will now attempt to unpickle, expecting 'wrapper_eo.EOWrapper'
         model_eo_wrapper = load_model_joblib(MODEL_WRAPPED_EO_FILENAME)
         
-        st.info(f"--- Debugging EOWrapper isinstance ---")
-        st.info(f"Type de 'model_eo_wrapper' chargé: {type(model_eo_wrapper)}")
+        st.info(f"--- Debugging EOWrapper isinstance after loading '{MODEL_WRAPPED_EO_FILENAME}' ---")
+        st.info(f"Type of 'model_eo_wrapper' chargé: {type(model_eo_wrapper)}")
         st.info(f"Module de 'model_eo_wrapper': {type(model_eo_wrapper).__module__}")
         st.info(f"Nom de classe de 'model_eo_wrapper': {type(model_eo_wrapper).__name__}")
         st.info(f"ID de la classe de 'model_eo_wrapper': {id(type(model_eo_wrapper))}")
@@ -201,14 +216,19 @@ if EOWrapper_class_global is not None:
         st.info(f"--- Fin Debugging ---")
 
         if not isinstance(model_eo_wrapper, EOWrapper_class_global):
-            st.error(f"L'objet chargé depuis '{MODEL_WRAPPED_EO_FILENAME}' n'est pas une instance de la classe EOWrapper attendue.")
-            st.error("Cela signifie que la classe du modèle désérialisé et la classe EOWrapper importée dynamiquement sont des objets différents en mémoire.")
-            st.error("Vérifiez que 'eo_wrapper_with_proba.joblib' a été créé avec une classe EOWrapper dont la définition est identique à celle dans 'wrapper_eo.py'.")
-            st.error(f"Module de l'objet chargé: '{type(model_eo_wrapper).__module__}', Module de la classe attendue: '{EOWrapper_class_global.__module__}'")
+            st.error(f"L'objet chargé depuis '{MODEL_WRAPPED_EO_FILENAME}' n'est pas une instance de la classe EOWrapper attendue (EOWrapper_class_global).")
+            st.error("Même si les noms de module et de classe semblent correspondre dans les logs de débogage, leurs ID d'objet de classe peuvent différer si la classe a été définie plusieurs fois.")
+            st.error("Assurez-vous que `@st.cache_resource` sur `get_ewrapper_class` fonctionne comme prévu pour stabiliser la définition de la classe.")
             st.stop()
         st.sidebar.success("EO Wrapper chargé et vérifié !")
-    except Exception as e:
-        st.error(f"Erreur de chargement du modèle EO Wrapper ('{MODEL_WRAPPED_EO_FILENAME}'): {e}")
+    except AttributeError as ae: # Catch specific AttributeError from pickle if it still occurs
+        st.error(f"AttributeError lors du chargement de '{MODEL_WRAPPED_EO_FILENAME}': {ae}")
+        st.error("Cela indique typiquement que pickle ne trouve pas la classe/attribut comme il a été sauvegardé.")
+        st.error("Vérifiez que le module 'wrapper_eo' est correctement enregistré dans sys.modules AVANT cet appel à load_model_joblib et qu'il contient 'EOWrapper'.")
+        st.exception(ae)
+        st.stop()
+    except Exception as e: # Catch other potential errors during loading
+        st.error(f"Erreur générale de chargement du modèle EO Wrapper ('{MODEL_WRAPPED_EO_FILENAME}'): {e}")
         st.exception(e)
         st.stop()
 else:
@@ -298,7 +318,7 @@ else:
     st.sidebar.warning("Seuil EO Wrapper non disponible ou modèle non chargé.")
 
 
-# === Contenu des Pages ===
+# === Contenu des Pages === (Reste inchangé, voir versions précédentes)
 
 if page == "Contexte & Objectifs":
     st.header("Contexte & Références")
