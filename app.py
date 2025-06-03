@@ -32,6 +32,26 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+import streamlit as st
+
+HF_TOKEN = st.secrets.get("HF_TOKEN", None)
+headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+
+def download_if_missing(filename, url):
+    if not os.path.exists(filename):
+        st.info(f"Téléchargement de {filename} depuis Hugging Face...")
+        try:
+            with requests.get(url, stream=True, headers=headers) as r:
+                r.raise_for_status()
+                with open(filename, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            st.success(f"{filename} téléchargé.")
+        except Exception as e:
+            st.error(f"Erreur lors du téléchargement de {filename}: {e}")
+            st.stop()
+
 # === Chemins & artefacts Hugging Face ===
 ARTEFACTS = {
     "application_train.csv": "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv",
