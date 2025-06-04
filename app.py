@@ -140,37 +140,38 @@ if df_preds is not None:
 else:
     df_merged = None
 
-# ——————————————————————————————————————————————————————————————
+ # ——————————————————————————————————————————————————————————————
 # NAVIGATION
 # ——————————————————————————————————————————————————————————————
- st.sidebar.title("📊 POC Scoring Équitable")
- page_options: List[str] = [
-     "Contexte & Objectifs",
-     "Méthodologie",
-     "Analyse Exploratoire (EDA)",
-     "Résultats & Comparaisons",
-     "Prédiction sur Client Sélectionné",
-     "Analyse Intersectionnelle",
-     "Courbes ROC & Probabilités - Baseline",
-     "Courbes ROC & Probabilités - EO Wrapper",
- ]
- session_key = "current_page_index_poc_scoring_dashboard"
- if session_key not in st.session_state:
-     st.session_state[session_key] = 0
+st.sidebar.title("📊 POC Scoring Équitable")
+page_options: List[str] = [
+    "Contexte & Objectifs",
+    "Méthodologie",
+    "Analyse Exploratoire (EDA)",
+    "Résultats & Comparaisons",
+    "Prédiction sur Client Sélectionné",
+    "Analyse Intersectionnelle",
+    "Courbes ROC & Probabilités - Baseline",
+    "Courbes ROC & Probabilités - EO Wrapper",
+]
+session_key = "current_page_index_poc_scoring_dashboard"
+if session_key not in st.session_state:
+    st.session_state[session_key] = 0
 
- page: str = st.sidebar.radio(
-     "Navigation",
-     page_options,
-     index=st.session_state[session_key],
-     key="nav_radio_poc_scoring_dashboard",
- )
- if page_options.index(page) != st.session_state[session_key]:
-     st.session_state[session_key] = page_options.index(page)
+page: str = st.sidebar.radio(
+    "Navigation",
+    page_options,
+    index=st.session_state[session_key],
+    key="nav_radio_poc_scoring_dashboard",
+)
+if page_options.index(page) != st.session_state[session_key]:
+    st.session_state[session_key] = page_options.index(page)
+
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Contexte & Objectifs
 # ——————————————————————————————————————————————————————————————
-elif page == "Contexte & Objectifs":
+if page == "Contexte & Objectifs":
     st.header("Contexte & Références")
     st.markdown(
         """
