@@ -1,7 +1,3 @@
-# --------------------------------------------
-# fichier : app_streamlit_dashboard.py
-# --------------------------------------------
-
 # ——————————————————————————————————————————————————————————————
 # fichier : app_streamlit_dashboard.py
 # ——————————————————————————————————————————————————————————————
@@ -102,26 +98,25 @@ def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
 RAW_DATA_FILENAME: str = "application_train.csv"
 PREDICTIONS_FILENAME: str = "predictions_validation.parquet"
 
-# --- Ajout pour l’interprétabilité globale et locale ---
 BASELINE_MODEL_FILENAME: str = "lgbm_baseline.joblib"
+EO_WRAPPER_FILENAME: str = "eo_wrapper_with_proba.joblib"
 X_VALID_FILENAME: str = "X_valid_pre.parquet"
 
 ARTEFACTS: Dict[str, str] = {
     RAW_DATA_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
-        "main/application_train.csv"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv"
     ),
     PREDICTIONS_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
-        "main/predictions_validation.parquet"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/predictions_validation.parquet"
     ),
     BASELINE_MODEL_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
-        "main/lgbm_baseline.joblib"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/lgbm_baseline.joblib"
+    ),
+    EO_WRAPPER_FILENAME: (
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/eo_wrapper_with_proba.joblib"
     ),
     X_VALID_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
-        "main/X_valid_pre.parquet"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_valid_pre.parquet"
     ),
 }
 
@@ -130,6 +125,49 @@ ARTEFACTS: Dict[str, str] = {
 # ——————————————————————————————————————————————————————————————
 for fname, url in ARTEFACTS.items():
     download_if_missing(fname, url)
+
+# ——————————————————————————————————————————————————————————————
+# Chargement des données existantes
+# ——————————————————————————————————————————————————————————————
+df_eda_sample = load_csv_for_eda(RAW_DATA_FILENAME, sample_frac=0.05)
+df_preds = load_parquet_file(PREDICTIONS_FILENAME)
+
+# Chargement des deux modèles et des données X_valid pour l’interprétabilité
+import joblib
+
+model_baseline = None
+eo_wrapper = None
+X_valid = None
+
+if os.path.exists(BASELINE_MODEL_FILENAME):
+    try:
+        model_baseline = joblib.load(BASELINE_MODEL_FILENAME)
+    except Exception as e:
+        st.error(f"Erreur chargement modèle Baseline : {e}")
+
+if os.path.exists(EO_WRAPPER_FILENAME):
+    try:
+        eo_wrapper = joblib.load(EO_WRAPPER_FILENAME)
+    except Exception as e:
+        st.error(f"Erreur chargement Wrapper EO : {e}")
+
+if os.path.exists(X_VALID_FILENAME):
+    X_valid_raw = load_parquet_file(X_VALID_FILENAME)
+    if X_valid_raw is not None:
+        X_valid = sanitize_feature_names(X_valid_raw)
+
+# Fusion pour l’analyse intersectionnelle (inchangé)
+df_application: Optional[pd.DataFrame] = None
+if df_preds is not None:
+    try:
+        df_application = pd.read_csv(RAW_DATA_FILENAME, index_col=0)
+        df_application = sanitize_feature_names(df_application)
+        df_merged = df_application.join(df_preds, how="inner")
+    except Exception as e:
+        st.error(f"Erreur fusion application+prédictions : {e}")
+        df_merged = None
+else:
+    df_merged = None
 
 # ——————————————————————————————————————————————————————————————
 # Chargement des données existantes
@@ -612,64 +650,143 @@ elif page == "Prédiction sur Client Sélectionné":
 # PAGE : Interpretabilité (nouvelle page globale)
 # ——————————————————————————————————————————————————————————————
 elif page == "Interpretabilité":
-    st.header("🔍 Interprétabilité Globale du Modèle Baseline")
-    if model_baseline is None or X_valid is None:
-        st.warning("Modèle Baseline ou données de validation non disponibles pour interprétabilité globale.")
+    st.header("🔍 Interprétabilité du Modèle")
+    if (model_baseline is None or eo_wrapper is None) or (X_valid is None):
+        st.warning("Les modèles ou les données de validation ne sont pas disponibles pour l’interprétabilité.")
     else:
-        st.markdown(
-            "Affichage des importances de features du modèle LightGBM Baseline "
-            "et explication globale via SHAP."
-        )
-
-        # 1) Feature importances du modèle
+        # 1) Importances de features - Baseline
         st.subheader("Importances de Features (Baseline)")
-        fi = model_baseline.feature_importances_
-        df_fi = pd.DataFrame({
+        fi_base = model_baseline.feature_importances_
+        df_fi_base = pd.DataFrame({
             "feature": X_valid.columns,
-            "importance": fi
+            "importance": fi_base
         }).sort_values("importance", ascending=False).head(20)
 
-        fig_fi = px.bar(
-            df_fi,
+        fig_fi_base = px.bar(
+            df_fi_base,
             x="importance",
             y="feature",
             orientation="h",
-            title="Top 20 Features par importance (Baseline)",
+            title="Top 20 Features - Baseline",
             labels={"importance": "Importance", "feature": "Feature"},
-            color_discrete_sequence=["#1f77b4"],  # bleu à contraste élevé
+            color_discrete_sequence=["#1f77b4"],  # bleu foncé
         )
-        fig_fi.update_layout(yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_fi, use_container_width=True)
+        fig_fi_base.update_layout(yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_fi_base, use_container_width=True)
         st.markdown(
-            "**Description** : Barres horizontales en bleu indiquant "
-            "les 20 features les plus importantes selon le modèle Baseline."
+            "**Baseline** : ces 20 variables sont celles qui impactent le plus la prédiction selon LightGBM."
         )
 
-        # 2) Explication globale via SHAP (summary plot)
+        # 2) Importances de features - EO wrapper
+        st.subheader("Importances de Features (EO Wrapper pondéré)")
+        # On agrège les importances de chaque estimateur pondéré
+        try:
+            # Chaque "predictor" est un LGBMClassifier interne
+            all_importances = np.zeros_like(fi_base, dtype=float)
+            total_weight = 0.0
+            for estimator, weight in zip(eo_wrapper.mitigator.predictors_, eo_wrapper.mitigator.weights_):
+                imp = estimator.feature_importances_
+                all_importances += weight * imp
+                total_weight += weight
+            # Normalisation
+            all_importances /= total_weight
+            df_fi_eo = pd.DataFrame({
+                "feature": X_valid.columns,
+                "importance": all_importances
+            }).sort_values("importance", ascending=False).head(20)
+
+            fig_fi_eo = px.bar(
+                df_fi_eo,
+                x="importance",
+                y="feature",
+                orientation="h",
+                title="Top 20 Features - EO Wrapper (pondération)",
+                labels={"importance": "Importance", "feature": "Feature"},
+                color_discrete_sequence=["#d62728"],  # rouge foncé
+            )
+            fig_fi_eo.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_fi_eo, use_container_width=True)
+            st.markdown(
+                "**EO Wrapper** : les importances calculées comme moyenne pondérée "
+                "des feature_importances_ de chaque LGBM sous-jacent."
+            )
+        except Exception:
+            st.warning("Impossible de calculer les importances EO (vérifier le wrapper).")
+
+        # 3) Explication globale via SHAP – Baseline
+        st.subheader("Résumé SHAP Global (Baseline)")
         try:
             import shap
-
-            st.subheader("Résumé SHAP Global (Baseline)")
-            explainer = shap.TreeExplainer(model_baseline)
-            shap_values = explainer.shap_values(X_valid)[1]
+            explainer_base = shap.TreeExplainer(model_baseline)
+            shap_values_base = explainer_base.shap_values(X_valid)[1]  # classe positive
             st.set_option('deprecation.showPyplotGlobalUse', False)
-            st.pyplot(shap.summary_plot(shap_values, X_valid, show=False))
+            st.pyplot(shap.summary_plot(shap_values_base, X_valid, show=False))
             st.markdown(
-                "**Description** : Diagramme SHAP montrant la distribution des effets "
-                "des features sur l’ensemble des clients de validation."
+                "**Diagramme SHAP** montrant la contribution (positive/négative) de chaque feature "
+                "sur l’ensemble des clients de validation (Baseline)."
             )
         except Exception as e:
-            st.warning(f"Impossible de générer le summary SHAP : {e}")
+            st.warning(f"Impossible de générer le summary SHAP pour Baseline : {e}")
 
-# ——————————————————————————————————————————————————————————————
-# PAGE : Analyse Intersectionnelle (MAJ avec EOD_EO, DPD, precision/recall, histogrammes)
-# ——————————————————————————————————————————————————————————————
-# ——————————————————————————————————————————————————————————————
-# PAGE : Analyse Intersectionnelle (MAJ complète)
-# ——————————————————————————————————————————————————————————————
-# ——————————————————————————————————————————————————————————————
-# PAGE : Analyse Intersectionnelle (MAJ pour afficher coefficient de Gini)
-# ——————————————————————————————————————————————————————————————
+        # 4) Explication globale approximative via SHAP – EO wrapper
+        st.subheader("Résumé SHAP Global (EO Wrapper)")
+        try:
+            import shap
+            # On définit un pseudo-explainer qui fait la moyenne pondérée des prédicteurs
+            def eo_predict_proba(X):
+                # retourne la probabilité de classe 1
+                return eo_wrapper.predict_proba(X)[:, 1]
+
+            explainer_eo = shap.Explainer(eo_predict_proba, X_valid)
+            shap_values_eo = explainer_eo(X_valid)
+            st.pyplot(shap.summary_plot(shap_values_eo.values, X_valid, show=False))
+            st.markdown(
+                "**Diagramme SHAP** approximé pour l’EO Wrapper (moyenne pondérée des estimateurs)."
+            )
+        except Exception as e:
+            st.warning(f"Impossible de générer le summary SHAP pour EO Wrapper : {e}")
+
+        # 5) Interprétabilité locale (SHAP) – Baseline vs EO pour un client
+        st.subheader("Interprétabilité Locale pour un Client")
+        client_ids = X_valid.index.tolist()
+        if client_ids:
+            selected_id = st.selectbox("Sélectionnez un ID client pour l’explication locale :", options=[str(i) for i in client_ids])
+            try:
+                sel_id = int(selected_id)
+            except ValueError:
+                sel_id = selected_id
+
+            if sel_id in X_valid.index:
+                client_feat = X_valid.loc[[sel_id]]
+                st.write(f"**Client ID : {sel_id}**")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Baseline (SHAP local)**")
+                    try:
+                        explainer_base = shap.TreeExplainer(model_baseline)
+                        shap_values_loc_base = explainer_base.shap_values(client_feat)[1]
+                        st.pyplot(shap.plots._waterfall.waterfall_legacy(
+                            explainer_base.expected_value[1], shap_values_loc_base[0], feature_names=client_feat.columns
+                        ))
+                    except Exception as e:
+                        st.warning(f"Impossible de calculer SHAP local Baseline : {e}")
+
+                with col2:
+                    st.markdown("**EO Wrapper (SHAP local approximé)**")
+                    try:
+                        explainer_eo_loc = shap.Explainer(eo_predict_proba, client_feat)
+                        shap_values_loc_eo = explainer_eo_loc(client_feat)
+                        st.pyplot(shap.plots._waterfall.waterfall_legacy(
+                            explainer_eo_loc.expected_value, shap_values_loc_eo.values[0], feature_names=client_feat.columns
+                        ))
+                    except Exception as e:
+                        st.warning(f"Impossible de calculer SHAP local EO Wrapper : {e}")
+            else:
+                st.error(f"L’ID {sel_id} n’est pas présent dans X_valid.")
+        else:
+            st.info("Aucun ID client disponible pour l’interprétation locale.")
+
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Intersectionnelle (MAJ pour WCAG/Accessibilité)
 # ——————————————————————————————————————————————————————————————
