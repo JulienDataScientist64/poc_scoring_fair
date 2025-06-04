@@ -170,7 +170,7 @@ if page_options.index(page) != st.session_state[session_key]:
 # ——————————————————————————————————————————————————————————————
 # PAGE : Contexte & Objectifs
 # ——————————————————————————————————————————————————————————————
-if page == "Contexte & Objectifs":
+elif page == "Contexte & Objectifs":
     st.header("Contexte & Références")
     st.markdown(
         """
@@ -218,6 +218,7 @@ if page == "Contexte & Objectifs":
         """
     )
 
+
 # ——————————————————————————————————————————————————————————————
 # PAGE : Méthodologie
 # ——————————————————————————————————————————————————————————————
@@ -260,6 +261,7 @@ elif page == "Méthodologie":
         - **Analyse détaillée** : matrice de confusion et taux de sélection par groupe.
         """
     )
+
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Exploratoire (EDA)
@@ -530,7 +532,7 @@ elif page == "Prédiction sur Client Sélectionné":
 
 
 # ——————————————————————————————————————————————————————————————
-# PAGE : Analyse Intersectionnelle
+# PAGE : Analyse Intersectionnelle (MAJ avec EOD_EO, DPD, precision/recall, histogrammes)
 # ——————————————————————————————————————————————————————————————
 elif page == "Analyse Intersectionnelle":
     st.header("🔀 Analyse Intersectionnelle")
@@ -555,31 +557,64 @@ elif page == "Analyse Intersectionnelle":
                     if subset.empty:
                         continue
 
+                    # Taux de sélection pour Baseline et EO
                     sel_base = subset["y_pred_baseline"].mean()
                     sel_eo = subset["y_pred_eo"].mean()
 
+                    # EOD sur le modèle mitigé (EO)
                     try:
                         eod_mod = equalized_odds_difference(
                             subset["y_true"],
-                            subset["y_pred_baseline"],
+                            subset["y_pred_eo"],
                             sensitive_features=subset["sensitive_feature"],
                         )
                     except Exception:
                         eod_mod = np.nan
+
+                    # DPD sur le modèle mitigé (EO)
+                    try:
+                        dpd_mod = demographic_parity_difference(
+                            subset["y_true"],
+                            subset["y_pred_eo"],
+                            sensitive_features=subset["sensitive_feature"],
+                        )
+                    except Exception:
+                        dpd_mod = np.nan
+
+                    # Précision & rappel pour le modèle mitigé (EO)
+                    from sklearn.metrics import precision_score, recall_score
+
+                    try:
+                        prec_mod = precision_score(
+                            subset["y_true"], subset["y_pred_eo"], zero_division=0
+                        )
+                        rec_mod = recall_score(
+                            subset["y_true"], subset["y_pred_eo"], zero_division=0
+                        )
+                    except Exception:
+                        prec_mod = np.nan
+                        rec_mod = np.nan
 
                     results.append(
                         {
                             "Modalité": mod,
                             "SelRate_Baseline": sel_base,
                             "SelRate_EO": sel_eo,
-                            "EOD_Baseline": eod_mod,
+                            "EOD_EO": eod_mod,
+                            "DPD_EO": dpd_mod,
+                            "Precision_EO": prec_mod,
+                            "Recall_EO": rec_mod,
                         }
                     )
 
                 df_inter = pd.DataFrame(results).set_index("Modalité")
                 st.subheader(f"Métriques par modalité de '{chosen_col}'")
-                st.dataframe(df_inter.style.format({col: "{:.3f}" for col in df_inter.columns}), use_container_width=True)
+                st.dataframe(
+                    df_inter.style.format({col: "{:.3f}" for col in df_inter.columns}),
+                    use_container_width=True,
+                )
 
+                # Graphique comparatif des taux de sélection
                 fig_inter_sel = px.bar(
                     df_inter.reset_index().melt(
                         id_vars="Modalité",
@@ -596,17 +631,63 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_inter_sel, use_container_width=True)
 
+                # Graphique EOD pour le modèle mitigé (EO)
                 fig_inter_eod = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
-                    y="EOD_Baseline",
-                    title=f"EOD (Baseline) par modalités de '{chosen_col}'",
-                    labels={"EOD_Baseline": "Equalized Odds Diff"},
+                    y="EOD_EO",
+                    title=f"EOD (EO mitigé) par modalités de '{chosen_col}'",
+                    labels={"EOD_EO": "Equalized Odds Diff (EO)"},
                 )
                 st.plotly_chart(fig_inter_eod, use_container_width=True)
+
+                # Graphique DPD pour le modèle mitigé (EO)
+                fig_inter_dpd = px.bar(
+                    df_inter.reset_index(),
+                    x="Modalité",
+                    y="DPD_EO",
+                    title=f"DPD (EO mitigé) par modalités de '{chosen_col}'",
+                    labels={"DPD_EO": "Demographic Parity Diff (EO)"},
+                )
+                st.plotly_chart(fig_inter_dpd, use_container_width=True)
+
+                # Graphique Précision & Rappel pour EO
+                df_pr_rec = df_inter[["Precision_EO", "Recall_EO"]].reset_index().melt(
+                    id_vars="Modalité",
+                    value_vars=["Precision_EO", "Recall_EO"],
+                    var_name="Métrique",
+                    value_name="Valeur",
+                )
+                fig_pr_rec = px.bar(
+                    df_pr_rec,
+                    x="Modalité",
+                    y="Valeur",
+                    color="Métrique",
+                    barmode="group",
+                    title=f"Précision & Rappel (EO) par modalités de '{chosen_col}'",
+                    labels={"Modalité": chosen_col, "Valeur": "Score"},
+                )
+                st.plotly_chart(fig_pr_rec, use_container_width=True)
+
+                # Optionnel : distribution des probabilités EO par groupe sensible
+                if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité"):
+                    for mod in modalities:
+                        subset = df_merged[df_merged[chosen_col] == mod]
+                        if subset.empty:
+                            continue
+                        fig_hist = px.histogram(
+                            subset,
+                            x="proba_eo",
+                            color="sensitive_feature",
+                            nbins=30,
+                            barmode="overlay",
+                            title=f"Distribution des probabilités EO pour la modalité '{mod}'",
+                            labels={"proba_eo": "Score EO", "sensitive_feature": "Groupe sensible"},
+                        )
+                        st.plotly_chart(fig_hist, use_container_width=True)
+
     else:
         st.warning("Fusion des données application + prédictions impossible.")
-
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Courbes ROC & Probabilités - Baseline
