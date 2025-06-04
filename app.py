@@ -2,6 +2,10 @@
 # fichier : app_streamlit_dashboard.py
 # --------------------------------------------
 
+# ——————————————————————————————————————————————————————————————
+# fichier : app_streamlit_dashboard.py
+# ——————————————————————————————————————————————————————————————
+
 import os
 import re
 from typing import List, Dict, Any, Optional
@@ -21,8 +25,87 @@ from fairlearn.metrics import (
 )
 
 # ——————————————————————————————————————————————————————————————
-# CONSTANTES ET CHEMINS (ajout pour interpretabilité)
+# FONCTIONS UTILITAIRES MANQUANTES
 # ——————————————————————————————————————————————————————————————
+
+def download_if_missing(filename: str, url: str) -> None:
+    """
+    Télécharge le fichier depuis Hugging Face si absent localement.
+    """
+    if not os.path.exists(filename):
+        st.info(f"Téléchargement de '{filename}'…")
+        try:
+            import requests  # import paresseux
+
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                with open(filename, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            st.success(f"'{filename}' téléchargé.")
+        except Exception as e:
+            st.error(f"Erreur lors du téléchargement de '{filename}' : {e}")
+            if hasattr(e, "response") and getattr(e, "response", None) is not None:
+                st.error(
+                    f"Réponse du serveur : {e.response.status_code} – {e.response.text}"
+                )
+            st.stop()
+
+
+@st.cache_data
+def load_csv_for_eda(path: str, sample_frac: float = 0.05) -> Optional[pd.DataFrame]:
+    """
+    Charge un échantillon du CSV brut pour l’EDA.
+    """
+    try:
+        df = pd.read_csv(path)
+        if 0.0 < sample_frac < 1.0 and len(df) * sample_frac >= 1:
+            df = df.sample(frac=sample_frac, random_state=42)
+        return df
+    except FileNotFoundError:
+        st.error(f"Fichier EDA non trouvé : '{path}'")
+        return None
+    except Exception as e:
+        st.error(f"Erreur de chargement du CSV pour l’EDA '{path}' : {e}")
+        return None
+
+
+@st.cache_data
+def load_parquet_file(path: str) -> Optional[pd.DataFrame]:
+    """
+    Charge un fichier Parquet.
+    """
+    try:
+        return pd.read_parquet(path)
+    except FileNotFoundError:
+        st.error(f"Parquet non trouvé : '{path}'")
+        return None
+    except Exception as e:
+        st.error(f"Erreur de chargement du Parquet '{path}' : {e}")
+        return None
+
+
+def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remplace les caractères non alphanumériques ou underscore dans les noms de colonnes
+    par un underscore, pour éviter tout problème de parsing.
+    """
+    df = df_input.copy()
+    cleaned_columns = [re.sub(r"[^0-9a-zA-Z_]", "_", str(col)) for col in df.columns]
+    df.columns = cleaned_columns
+    return df
+
+
+# ——————————————————————————————————————————————————————————————
+# CONSTANTES ET CHEMINS (définitions avant ARTEFACTS)
+# ——————————————————————————————————————————————————————————————
+RAW_DATA_FILENAME: str = "application_train.csv"
+PREDICTIONS_FILENAME: str = "predictions_validation.parquet"
+
+# --- Ajout pour l’interprétabilité globale et locale ---
+BASELINE_MODEL_FILENAME: str = "lgbm_baseline.joblib"
+X_VALID_FILENAME: str = "X_valid_pre.parquet"
+
 ARTEFACTS: Dict[str, str] = {
     RAW_DATA_FILENAME: (
         "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
@@ -32,37 +115,42 @@ ARTEFACTS: Dict[str, str] = {
         "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
         "main/predictions_validation.parquet"
     ),
-    "lgbm_baseline.joblib": (
+    BASELINE_MODEL_FILENAME: (
         "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
         "main/lgbm_baseline.joblib"
     ),
-    "X_valid_pre.parquet": (
+    X_VALID_FILENAME: (
         "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
         "main/X_valid_pre.parquet"
     ),
 }
 
 # ——————————————————————————————————————————————————————————————
-# TÉLÉCHARGEMENT DES ARTEFACTS (mise à jour pour modèles et features)
+# TÉLÉCHARGEMENT DES ARTEFACTS
 # ——————————————————————————————————————————————————————————————
 for fname, url in ARTEFACTS.items():
     download_if_missing(fname, url)
 
+# ——————————————————————————————————————————————————————————————
 # Chargement des données existantes
+# ——————————————————————————————————————————————————————————————
 df_eda_sample = load_csv_for_eda(RAW_DATA_FILENAME, sample_frac=0.05)
 df_preds = load_parquet_file(PREDICTIONS_FILENAME)
 
-# Chargement du modèle baseline et des données X_valid pour interpretabilité
+# Chargement du modèle baseline et des données X_valid pour interprétabilité
 import joblib
+
 model_baseline = None
 X_valid = None
-if os.path.exists("lgbm_baseline.joblib"):
+
+if os.path.exists(BASELINE_MODEL_FILENAME):
     try:
-        model_baseline = joblib.load("lgbm_baseline.joblib")
+        model_baseline = joblib.load(BASELINE_MODEL_FILENAME)
     except Exception as e:
         st.error(f"Erreur chargement modèle baseline : {e}")
-if os.path.exists("X_valid_pre.parquet"):
-    X_valid_raw = load_parquet_file("X_valid_pre.parquet")
+
+if os.path.exists(X_VALID_FILENAME):
+    X_valid_raw = load_parquet_file(X_VALID_FILENAME)
     if X_valid_raw is not None:
         X_valid = sanitize_feature_names(X_valid_raw)
 
@@ -78,7 +166,6 @@ if df_preds is not None:
         df_merged = None
 else:
     df_merged = None
-
 
 # ——————————————————————————————————————————————————————————————
 # NAVIGATION (ajout page “Interpretabilité”)
@@ -107,7 +194,6 @@ page: str = st.sidebar.radio(
 )
 if page_options.index(page) != st.session_state[session_key]:
     st.session_state[session_key] = page_options.index(page)
-
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Contexte & Objectifs
