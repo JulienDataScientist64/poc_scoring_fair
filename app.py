@@ -325,6 +325,35 @@ elif page == "Analyse Exploratoire (EDA)":
             df_eda_sample.describe(include=np.number).T, use_container_width=True
         )
 
+        # --- Répartition du genre (CODE_GENDER) ---
+        if "CODE_GENDER" in df_eda_sample.columns:
+            st.subheader("Répartition par genre ('CODE_GENDER')")
+            gender_counts = df_eda_sample["CODE_GENDER"].value_counts()
+            gender_percent = df_eda_sample["CODE_GENDER"].value_counts(normalize=True) * 100
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("Comptage absolu :")
+                st.dataframe(gender_counts)
+            with col2:
+                st.write("Pourcentage :")
+                st.dataframe(gender_percent.map("{:.2f}%".format))
+
+            try:
+                fig_gender_pie = px.pie(
+                    names=gender_counts.index,
+                    values=gender_counts.values,
+                    title="Répartition du genre dans l’échantillon",
+                    color_discrete_sequence=["#1F77B4", "#FF7F0E", "#2CA02C"],
+                )
+                fig_gender_pie.update_traces(textinfo="label+percent", hole=0.4)
+                st.plotly_chart(fig_gender_pie, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Impossible de générer le camembert de genre : {e}")
+        else:
+            st.info("La colonne 'CODE_GENDER' n’est pas présente pour afficher la répartition par genre.")
+
+        # --- Distribution de la cible 'TARGET' ---
         if "TARGET" in df_eda_sample.columns:
             st.subheader("Distribution de la variable cible 'TARGET'")
             target_counts = df_eda_sample["TARGET"].value_counts()
@@ -354,6 +383,7 @@ elif page == "Analyse Exploratoire (EDA)":
         else:
             st.warning("La colonne 'TARGET' n’est pas présente dans l’échantillon.")
 
+        # --- Distribution de 'AMT_INCOME_TOTAL' ---
         numerical_col = "AMT_INCOME_TOTAL"
         if numerical_col in df_eda_sample.columns:
             st.subheader(f"Distribution de '{numerical_col}'")
@@ -373,14 +403,54 @@ elif page == "Analyse Exploratoire (EDA)":
                     marginal="box",
                     title=f"Distribution de '{numerical_col}' (plafonné à {cap:,.0f} si applicable)",
                     labels={numerical_col: "Revenu total", "TARGET": "Classe de défaut"},
+                    color_discrete_sequence=["#1F77B4", "#FF7F0E"],
                 )
                 st.plotly_chart(fig_income, use_container_width=True)
             except Exception as e:
                 st.warning(f"Impossible de générer l'histogramme de {numerical_col} : {e}")
         else:
             st.info(f"La colonne '{numerical_col}' n’est pas disponible pour l’EDA.")
+
+        # --- Menu déroulant : choisir une feature pour distribution segmentée par genre ---
+        if "CODE_GENDER" in df_eda_sample.columns:
+            st.subheader("Distribution d’une feature selon CODE_GENDER")
+            # Lister uniquement les colonnes numériques ou à faible cardinalité
+            potential_cols = df_eda_sample.select_dtypes(include=[np.number]).columns.tolist()
+            # Exclure les colonnes déjà utilisées
+            potential_cols = [col for col in potential_cols if col not in ["TARGET", "AMT_INCOME_TOTAL"]]
+            chosen_feature = st.selectbox(
+                "Choisissez une colonne numérique :", [""] + potential_cols
+            )
+            if chosen_feature:
+                st.markdown(f"**Distribution de '{chosen_feature}' par genre**")
+                try:
+                    # Histogramme combiné
+                    fig_feat_gender = px.histogram(
+                        df_eda_sample,
+                        x=chosen_feature,
+                        color="CODE_GENDER",
+                        nbins=50,
+                        barmode="overlay",
+                        marginal="rug",
+                        title=f"Distribution de '{chosen_feature}' par CODE_GENDER",
+                        labels={chosen_feature: chosen_feature, "CODE_GENDER": "Genre"},
+                        color_discrete_map={"M": "#1F77B4", "F": "#FF7F0E", "XNA": "#2CA02C"},
+                    )
+                    fig_feat_gender.add_vline(
+                        x=df_eda_sample[chosen_feature].mean(),
+                        line_color="black",
+                        line_dash="dash",
+                        annotation_text="Moyenne globale",
+                        annotation_position="top right"
+                    )
+                    st.plotly_chart(fig_feat_gender, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Impossible de générer la distribution pour '{chosen_feature}' : {e}")
+
+        # Fin EDA
     else:
         st.error("L’échantillon pour l’EDA n’a pas pu être chargé.")
+
 
 
 # ——————————————————————————————————————————————————————————————
