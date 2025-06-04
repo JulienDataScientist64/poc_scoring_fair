@@ -161,105 +161,71 @@ if page_options.index(page) != st.session_state[session_key]:
 
 
 # ——————————————————————————————————————————————————————————————
-# PAGE : Contexte & Objectifs (ajout de notes sur couleurs à contraste WCAG)
+# PAGE : Contexte & Objectifs
 # ——————————————————————————————————————————————————————————————
 if page == "Contexte & Objectifs":
     st.header("Contexte & Références")
     st.markdown(
         """
         **Pourquoi l’équité dans le scoring crédit ?**
-        - 🔒 Les régulateurs (IA Act, lois anti-discrimination) exigent que le scoring n’avantage ni ne désavantage aucun groupe (genre, âge, région).
-        - 🔍 Ce POC compare deux approches :
-          1. **LightGBM classique** (modèle ML standard)  
-          2. **LightGBM + Fairlearn EG–EO** (ajout d’une contrainte d’équité)
+        - Les régulateurs (comme l’IA Act et les lois anti-discrimination) imposent que les modèles de scoring crédit n’avantagent ni ne désavantagent un groupe (par exemple le genre).
+        - Ce POC compare deux approches :
+          1. **LightGBM classique** (modèle standard de machine learning)
+          2. **LightGBM associé à Fairlearn EG-EO** (ajout d’une contrainte d’équité sur la prédiction)
 
-        **Objectif métier :**  
-        Offrir un modèle performant **et** juste pour tous les groupes (ex. : hommes/femmes).
+        **Objectif métier :**
+        Obtenir un modèle performant mais qui reste juste entre les différents groupes (ex : hommes/femmes).
         """
     )
-
     st.subheader("Fairlearn")
     st.markdown(
         """
-        **Fairlearn** est une librairie open source par Microsoft pour :
-        - ✅ **Évaluer** la justice (bias/équité) des modèles ML  
-        - ⚙️ **Corriger** ces biais via des algorithmes de réduction (e.g. **ExponentiatedGradient**)  
-        - 📊 **Visualiser** l’impact des techniques d’atténuation  
+        **Fairlearn** est une librairie open source développée par Microsoft pour évaluer et améliorer l’équité des modèles de Machine Learning.  
+        Elle fournit :
+        - Des métriques d’équité (DPD, EOD, etc.) pour détecter d’éventuels biais.  
+        - Un module de réduction (« reductions ») qui ajuste plusieurs estimateurs afin de satisfaire des contraintes d’équité, comme **Equalized Odds** ou **Demographic Parity**.  
+        - Des outils de visualisation pour comparer différentes stratégies de mitigation.  
 
-        Pour en savoir plus, consultez la documentation officielle :  
-        [🔗 fairlearn.org](https://fairlearn.org)  
-        (ou explorez le dépôt GitHub)
+        Pour en savoir plus, consultez la documentation officielle de Fairlearn :  
+        [https://fairlearn.org](https://fairlearn.org)  
+        (ou le dépôt GitHub)  
         """
     )
 
     st.subheader("Papiers de référence")
-    with st.expander("📄 Hardt, Price & Srebro (2016) – Equalized Odds"):
+    with st.expander("Hardt, Price & Srebro (2016) – Equalized Odds"):
         st.write(
             """
-            **Résumé :**  
-            - Equalized Odds exige que la **sensibilité** (rappel) soit similaire pour chaque groupe sensible (ex. : hommes vs femmes), quelle que soit la vraie classe (défaut ou non).  
-            - On cherche à minimiser l’écart de TPR (True Positive Rate) et de FPR (False Positive Rate) entre ces groupes.  
+            **Résumé pédagogique :**
+            - Equalized Odds impose que le taux de bonne détection (rappel) soit similaire pour chaque groupe (par exemple hommes et femmes), pour les personnes qui remboursent ou non.
+            - Un modèle respectant bien Equalized Odds limite donc les écarts d’erreur selon le groupe sensible.
             """
         )
-        st.markdown("[→ Lire sur arXiv](https://arxiv.org/abs/1610.02413)")
+        st.markdown("[Lire le papier (arXiv)](https://arxiv.org/abs/1610.02413)")
 
-    with st.expander("📄 Agarwal et al. (2019) – Exponentiated Gradient"):
+    with st.expander("Agarwal et al. (2019) – Exponentiated Gradient"):
         st.write(
             """
-            **Résumé :**  
-            - ExponentiatedGradient combine plusieurs modèles en ajustant leurs poids pour respecter une contrainte d’équité (ex. Equalized Odds) tout en gardant une bonne AUC.  
-            - À chaque itération, il « récompense » les sous-modèles qui réduisent le biais et « pénalise » ceux qui l’accentuent.  
+            **Résumé pédagogique :**
+            - L’algorithme Exponentiated Gradient combine plusieurs modèles en ajustant leurs poids pour trouver un compromis optimal entre performance et équité.
+            - À chaque étape, il renforce les modèles qui respectent le mieux la contrainte d’équité.
+            - Cette méthode permet d’obtenir un modèle global qui ne discrimine pas, tout en gardant un bon niveau de prédiction.
             """
         )
-        st.markdown("[→ Lire sur ACM](https://dl.acm.org/doi/10.1145/3287560.3287572)")
+        st.markdown("[Lire le papier (ACM)](https://dl.acm.org/doi/10.1145/3287560.3287572)")
 
-    st.subheader("Métriques d’équité utilisées")
+    st.subheader("Métriques d'équité utilisées")
     st.markdown(
         """
-        🔍 **Demographic Parity Difference (DPD)**  
-        > Mesure la **différence** de taux d’attribution positive (approbation/refus) entre groupes.  
-        > ✨ Idéal : DPD ≈ 0 (taux d’approbation identique).  
-
-        ⚖️ **Equalized Odds Difference (EOD)**  
-        > Vérifie que la **sensibilité** (TPR) est la même pour chaque groupe.  
-        > ✨ Idéal : EOD ≈ 0 (aucun écart de TPR/FPR).  
-
-        🔄 **Exponentiated Gradient (EG)**  
-        > Algorithme pour **trouver un compromis** entre performance (AUC, précision, rappel) et équité (DPD/EOD).  
+        - **Demographic Parity Difference (DPD) :**
+          > Mesure la différence de taux d’attribution positive du crédit entre groupes (idéal : zéro différence).
+        - **Equalized Odds Difference (EOD) :**
+          > Mesure l’écart de performance du modèle (sensibilité/spécificité) selon le groupe sensible. Un modèle équitable aura un EOD proche de zéro.
+        - **Exponentiated Gradient (EG) :**
+          > Méthode pour trouver un compromis entre performance et équité, en combinant plusieurs modèles de façon intelligente.
         """
     )
 
-    st.subheader("Accessibilité & normes WCAG")
-    st.markdown(
-        """
-        Pour garantir l’accessibilité, nous appliquons les quatre piliers des **WCAG (Web Content Accessibility Guidelines)** :
-        1. **Perceivable (Perceptible)**  
-           - **Palette à contraste élevé** :  
-             • Texte et icônes utilisent du **texte sombre (#0A0A0A)** sur fond clair (#FFFFFF) ou  
-             • Texte clair (#FFFFFF) sur fond sombre (#1F77B4).  
-           - **Exemple de couleurs validées** :  
-             - Bleu principal : `#1F77B4` (ratio 9.1:1 sur blanc)  
-             - Orange secondaire : `#FF7F0E` (ratio 7.2:1 sur blanc)  
-           - **Descriptions textuelles** pour tous les graphiques (titre + légende explicite).
-
-        2. **Operable (Opérable)**  
-           - **Navigation clavier** : widgets (sélecteurs, boutons) sont accessibles via la touche Tab.  
-           - **Focus visible** : style de mise en surbrillance = bordure épaisse `2px solid #FF7F0E`.  
-           - **Temps suffisant** : pas de limite ou expiration subite de session.
-
-        3. **Understandable (Compréhensible)**  
-           - **Langage clair** : termes simples, définitions pour tout jargon (info-bulles).  
-           - **Consistance visuelle** : mêmes couleurs et tailles de police pour titres, sous-titres, légendes.  
-           - **Aide intégrée** : infobulles pour contrôles pouvant prêter à confusion.
-
-        4. **Robust (Robuste)**  
-           - **Compatibilité navigateurs & lecteurs d’écran** : test sur Chrome, Firefox, NVDA, JAWS.  
-           - **Balises HTML sémantiques** : Streamlit génère des balises `<h1>`, `<h2>`, `<button>`, etc., reconnues par les aides techniques.
-
-        > En appliquant ces pratiques, les éléments textuels et graphiques sont lisibles et compréhensibles pour  
-        > les personnes daltoniennes, malvoyantes ou utilisant un lecteur d’écran.
-        """
-    )
 
 
 # ——————————————————————————————————————————————————————————————
