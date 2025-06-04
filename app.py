@@ -143,29 +143,29 @@ else:
 # ——————————————————————————————————————————————————————————————
 # NAVIGATION
 # ——————————————————————————————————————————————————————————————
-st.sidebar.title("📊 POC Scoring Équitable")
-page_options: List[str] = [
-    "Contexte & Objectifs",
-    "Méthodologie",
-    "Analyse Exploratoire (EDA)",
-    "Résultats & Comparaisons",
-    "Prédiction sur Client Sélectionné",
-    "Analyse Intersectionnelle",
-    "Courbes ROC & Probabilités - Baseline",
-    "Courbes ROC & Probabilités - EO Wrapper",
-]
-session_key = "current_page_index_poc_scoring_dashboard"
-if session_key not in st.session_state:
-    st.session_state[session_key] = 0
+ st.sidebar.title("📊 POC Scoring Équitable")
+ page_options: List[str] = [
+     "Contexte & Objectifs",
+     "Méthodologie",
+     "Analyse Exploratoire (EDA)",
+     "Résultats & Comparaisons",
+     "Prédiction sur Client Sélectionné",
+     "Analyse Intersectionnelle",
+     "Courbes ROC & Probabilités - Baseline",
+     "Courbes ROC & Probabilités - EO Wrapper",
+ ]
+ session_key = "current_page_index_poc_scoring_dashboard"
+ if session_key not in st.session_state:
+     st.session_state[session_key] = 0
 
-page: str = st.sidebar.radio(
-    "Navigation",
-    page_options,
-    index=st.session_state[session_key],
-    key="nav_radio_poc_scoring_dashboard",
-)
-if page_options.index(page) != st.session_state[session_key]:
-    st.session_state[session_key] = page_options.index(page)
+ page: str = st.sidebar.radio(
+     "Navigation",
+     page_options,
+     index=st.session_state[session_key],
+     key="nav_radio_poc_scoring_dashboard",
+ )
+ if page_options.index(page) != st.session_state[session_key]:
+     st.session_state[session_key] = page_options.index(page)
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Contexte & Objectifs
@@ -537,6 +537,9 @@ elif page == "Prédiction sur Client Sélectionné":
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Intersectionnelle (MAJ complète)
 # ——————————————————————————————————————————————————————————————
+# ——————————————————————————————————————————————————————————————
+# PAGE : Analyse Intersectionnelle (MAJ pour afficher coefficient de Gini)
+# ——————————————————————————————————————————————————————————————
 elif page == "Analyse Intersectionnelle":
     st.header("🔀 Analyse Intersectionnelle")
     st.caption(
@@ -556,7 +559,6 @@ elif page == "Analyse Intersectionnelle":
                 st.error(f"Aucune modalité valide pour {chosen_col}.")
             else:
                 # 2. (Facultatif) filtre temporel/géographique si ces colonnes existent
-                filters = {}
                 if "DATE" in df_merged.columns:
                     dates = pd.to_datetime(df_merged["DATE"], errors="coerce")
                     df_merged["ANNEE"] = dates.dt.year
@@ -703,7 +705,28 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_pr_rec, use_container_width=True)
 
-                # 10. Distribution des probabilités EO par groupe pour chaque modalité
+                # 10. Affichage du coefficient de Gini pour chaque groupe sensible
+                gini_cols = [c for c in df_inter.columns if c.startswith("Gini_")]
+                if gini_cols:
+                    df_gini = (
+                        df_inter[gini_cols]
+                        .reset_index()
+                        .melt(id_vars="Modalité", value_vars=gini_cols, var_name="Groupe", value_name="Gini")
+                    )
+                    # On nettoie le nom du groupe (Gini_CODE -> CODE)
+                    df_gini["Groupe"] = df_gini["Groupe"].str.replace(r"^Gini_", "", regex=True)
+                    fig_gini = px.bar(
+                        df_gini,
+                        x="Modalité",
+                        y="Gini",
+                        color="Groupe",
+                        barmode="group",
+                        title=f"Coefficients de Gini des scores EO par modalités de '{chosen_col}'",
+                        labels={"Modalité": chosen_col, "Gini": "Coefficient de Gini"},
+                    )
+                    st.plotly_chart(fig_gini, use_container_width=True)
+
+                # 11. Distribution des probabilités EO par groupe pour chaque modalité
                 if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité"):
                     for mod in modalities:
                         subset = df_merged[df_merged[chosen_col] == mod]
@@ -720,9 +743,10 @@ elif page == "Analyse Intersectionnelle":
                         )
                         st.plotly_chart(fig_hist, use_container_width=True)
 
-                # 11. Matrice de confusion pour EO par modalité
+                # 12. Matrice de confusion pour EO par modalité
                 if st.checkbox("Afficher la matrice de confusion EO pour chaque modalité"):
                     from sklearn.metrics import confusion_matrix
+
                     for mod in modalities:
                         subset = df_merged[df_merged[chosen_col] == mod]
                         if subset.empty:
@@ -742,7 +766,7 @@ elif page == "Analyse Intersectionnelle":
                         )
                         st.plotly_chart(fig_cm, use_container_width=True)
 
-                # 12. Export du rapport Excel
+                # 13. Export du rapport Excel
                 buffer = None
                 if st.button("📥 Exporter ce tableau au format Excel"):
                     import io
@@ -758,7 +782,7 @@ elif page == "Analyse Intersectionnelle":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                # 13. Comparaison “avant/après” biais artificiel (exemple simple)
+                # 14. Comparaison “avant/après” biais artificiel (exemple simple)
                 if st.checkbox("Comparer avant/après injection d’un biais artificiel"):
                     # Exemple : on inverse 10% des labels positifs dans un groupe sensible
                     group_to_bias = st.selectbox(
@@ -789,6 +813,7 @@ elif page == "Analyse Intersectionnelle":
 
     else:
         st.warning("Fusion des données application + prédictions impossible.")
+
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Courbes ROC & Probabilités - Baseline
