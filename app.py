@@ -1,6 +1,6 @@
-# ——————————————————————————————————————————————————————————————
+# --------------------------------------------
 # fichier : app_streamlit_dashboard.py
-# ——————————————————————————————————————————————————————————————
+# --------------------------------------------
 
 import os
 import re
@@ -21,7 +21,7 @@ from fairlearn.metrics import (
 )
 
 # ——————————————————————————————————————————————————————————————
-# FONCTIONS UTILITAIRES MANQUANTES
+# FONCTIONS UTILITAIRES
 # ——————————————————————————————————————————————————————————————
 
 def download_if_missing(filename: str, url: str) -> None:
@@ -93,30 +93,19 @@ def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
 
 
 # ——————————————————————————————————————————————————————————————
-# CONSTANTES ET CHEMINS (définitions avant ARTEFACTS)
+# CONSTANTES ET CHEMINS
 # ——————————————————————————————————————————————————————————————
 RAW_DATA_FILENAME: str = "application_train.csv"
 PREDICTIONS_FILENAME: str = "predictions_validation.parquet"
 
-BASELINE_MODEL_FILENAME: str = "lgbm_baseline.joblib"
-EO_WRAPPER_FILENAME: str = "eo_wrapper_with_proba.joblib"
-X_VALID_FILENAME: str = "X_valid_pre.parquet"
-
 ARTEFACTS: Dict[str, str] = {
     RAW_DATA_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/application_train.csv"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
+        "main/application_train.csv"
     ),
     PREDICTIONS_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/predictions_validation.parquet"
-    ),
-    BASELINE_MODEL_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/lgbm_baseline.joblib"
-    ),
-    EO_WRAPPER_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/eo_wrapper_with_proba.joblib"
-    ),
-    X_VALID_FILENAME: (
-        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/main/X_valid_pre.parquet"
+        "https://huggingface.co/cantalapiedra/poc_scoring_fair/resolve/"
+        "main/predictions_validation.parquet"
     ),
 }
 
@@ -126,37 +115,11 @@ ARTEFACTS: Dict[str, str] = {
 for fname, url in ARTEFACTS.items():
     download_if_missing(fname, url)
 
-# ——————————————————————————————————————————————————————————————
-# Chargement des données existantes
-# ——————————————————————————————————————————————————————————————
+# Chargement des données
 df_eda_sample = load_csv_for_eda(RAW_DATA_FILENAME, sample_frac=0.05)
 df_preds = load_parquet_file(PREDICTIONS_FILENAME)
 
-# Chargement des deux modèles et des données X_valid pour l’interprétabilité
-import joblib
-
-model_baseline = None
-eo_wrapper = None
-X_valid = None
-
-if os.path.exists(BASELINE_MODEL_FILENAME):
-    try:
-        model_baseline = joblib.load(BASELINE_MODEL_FILENAME)
-    except Exception as e:
-        st.error(f"Erreur chargement modèle Baseline : {e}")
-
-if os.path.exists(EO_WRAPPER_FILENAME):
-    try:
-        eo_wrapper = joblib.load(EO_WRAPPER_FILENAME)
-    except Exception as e:
-        st.error(f"Erreur chargement Wrapper EO : {e}")
-
-if os.path.exists(X_VALID_FILENAME):
-    X_valid_raw = load_parquet_file(X_VALID_FILENAME)
-    if X_valid_raw is not None:
-        X_valid = sanitize_feature_names(X_valid_raw)
-
-# Fusion pour l’analyse intersectionnelle (inchangé)
+# Pour intersectionnalité, on fusionne les prédictions avec le CSV complet
 df_application: Optional[pd.DataFrame] = None
 if df_preds is not None:
     try:
@@ -164,49 +127,13 @@ if df_preds is not None:
         df_application = sanitize_feature_names(df_application)
         df_merged = df_application.join(df_preds, how="inner")
     except Exception as e:
-        st.error(f"Erreur fusion application+prédictions : {e}")
+        st.error(f"Erreur lors de la fusion application+prédictions : {e}")
         df_merged = None
 else:
     df_merged = None
 
 # ——————————————————————————————————————————————————————————————
-# Chargement des données existantes
-# ——————————————————————————————————————————————————————————————
-df_eda_sample = load_csv_for_eda(RAW_DATA_FILENAME, sample_frac=0.05)
-df_preds = load_parquet_file(PREDICTIONS_FILENAME)
-
-# Chargement du modèle baseline et des données X_valid pour interprétabilité
-import joblib
-
-model_baseline = None
-X_valid = None
-
-if os.path.exists(BASELINE_MODEL_FILENAME):
-    try:
-        model_baseline = joblib.load(BASELINE_MODEL_FILENAME)
-    except Exception as e:
-        st.error(f"Erreur chargement modèle baseline : {e}")
-
-if os.path.exists(X_VALID_FILENAME):
-    X_valid_raw = load_parquet_file(X_VALID_FILENAME)
-    if X_valid_raw is not None:
-        X_valid = sanitize_feature_names(X_valid_raw)
-
-# Pour intersectionnalité
-df_application: Optional[pd.DataFrame] = None
-if df_preds is not None:
-    try:
-        df_application = pd.read_csv(RAW_DATA_FILENAME, index_col=0)
-        df_application = sanitize_feature_names(df_application)
-        df_merged = df_application.join(df_preds, how="inner")
-    except Exception as e:
-        st.error(f"Erreur fusion application+prédictions : {e}")
-        df_merged = None
-else:
-    df_merged = None
-
-# ——————————————————————————————————————————————————————————————
-# NAVIGATION (ajout page “Interpretabilité”)
+# NAVIGATION
 # ——————————————————————————————————————————————————————————————
 st.sidebar.title("📊 POC Scoring Équitable")
 page_options: List[str] = [
@@ -216,7 +143,6 @@ page_options: List[str] = [
     "Résultats & Comparaisons",
     "Prédiction sur Client Sélectionné",
     "Analyse Intersectionnelle",
-    "Interpretabilité",
     "Courbes ROC & Probabilités - Baseline",
     "Courbes ROC & Probabilités - EO Wrapper",
 ]
@@ -232,6 +158,7 @@ page: str = st.sidebar.radio(
 )
 if page_options.index(page) != st.session_state[session_key]:
     st.session_state[session_key] = page_options.index(page)
+
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Contexte & Objectifs
@@ -285,6 +212,9 @@ if page == "Contexte & Objectifs":
     )
 
 
+# ——————————————————————————————————————————————————————————————
+# PAGE : Méthodologie
+# ——————————————————————————————————————————————————————————————
 elif page == "Méthodologie":
     st.header("Méthodologie")
     st.subheader("Données & Préparation")
@@ -337,14 +267,14 @@ elif page == "Méthodologie":
     st.markdown(
         """
         1. **Perceivable (Perceptible)**  
-           - **Contraste élevé** : toutes les palettes de couleurs ont un ratio de contraste suffisant (texte et graphiques).  
-           - **Texte alternatif & descriptions** : chaque graphique est accompagné d’une description textuelle (“Description : …”) pour lecteurs d’écran.  
-           - **Taille de police lisible** : textes et annotations respectent une taille minimale pour être aisément lisibles.
+           - **Contraste élevé** : palettes de couleurs à ratio de contraste suffisant (texte et graphiques).  
+           - **Texte alternatif & descriptions** : chaque graphique a une description textuelle (“Description : …”) pour lecteurs d’écran.  
+           - **Taille de police lisible** : textes et annotations respectent une taille minimale.
 
         2. **Operable (Opérable)**  
            - **Navigation clavier** : toutes les interactions (sélecteurs, boutons) fonctionnent sans souris.  
            - **Focus visible** : le surlignage des éléments actifs est clairement visible.  
-           - **Temps suffisant** : les utilisateurs ont le temps de comprendre et interagir avant toute expiration de session.
+           - **Temps suffisant** : l’utilisateur dispose de temps pour comprendre et interagir avant toute expiration de session.
 
         3. **Understandable (Compréhensible)**  
            - **Langage clair** : terminologie simple, explications accessibles, évitement du jargon inutile.  
@@ -352,10 +282,10 @@ elif page == "Méthodologie":
            - **Aide intégrée** : info-bulle ou légende fournie dès qu’un contrôle peut être ambigu.
 
         4. **Robust (Robuste)**  
-           - **Compatibilité navigateurs et lecteurs d’écran** : tests réalisés sur Chrome, Firefox, NVDA et JAWS pour s’assurer d’une lecture cohérente.  
-           - **Utilisation de balises HTML sémantiques** : via Streamlit, nous nous assurons que les éléments sont reconnus correctement par les aides techniques.
+           - **Compatibilité navigateurs et lecteurs d’écran** : tests effectués sur Chrome, Firefox, NVDA et JAWS.  
+           - **Balises HTML sémantiques** : via Streamlit, on s’assure que les éléments sont correctement reconnus par les aides techniques.
 
-        > **Conclusion** : en appliquant ces quatre piliers du WCAG, nous garantissons que les graphiques et le contenu textuel sont accessibles à tous, y compris aux personnes daltoniennes, malvoyantes ou utilisant un lecteur d’écran.
+        > En appliquant ces quatre piliers WCAG, nous garantissons que le contenu textuel et graphique reste accessible, y compris aux personnes daltoniennes, malvoyantes ou utilisant un lecteur d’écran.
         """
     )
 
@@ -398,7 +328,7 @@ elif page == "Analyse Exploratoire (EDA)":
                     x="TARGET",
                     color="TARGET",
                     title="Histogramme de la variable cible 'TARGET'",
-                    labels={"TARGET": "Classe de défaut (0: Non-défaut, 1: Défaut)"},
+                    labels={"TARGET": "Classe de défaut (0 : Non-défaut, 1 : Défaut)"},
                     text_auto=True,
                 )
                 fig_target_hist.update_layout(bargap=0.2)
@@ -425,8 +355,7 @@ elif page == "Analyse Exploratoire (EDA)":
                     x=numerical_col,
                     color="TARGET" if "TARGET" in df_filtered.columns else None,
                     marginal="box",
-                    title=f"Distribution de '{numerical_col}' "
-                    f"(plafonné à {cap:,.0f} si applicable)",
+                    title=f"Distribution de '{numerical_col}' (plafonné à {cap:,.0f} si applicable)",
                     labels={numerical_col: "Revenu total", "TARGET": "Classe de défaut"},
                 )
                 st.plotly_chart(fig_income, use_container_width=True)
@@ -523,9 +452,7 @@ elif page == "Résultats & Comparaisons":
                     cm_b, x=labels_cm, y=labels_cm, annotation_text=z_text_b, colorscale="Blues"
                 )
                 fig_cm_b.update_layout(
-                    title_text="<i>Baseline</i>",
-                    xaxis_title="Prédit",
-                    yaxis_title="Réel",
+                    title_text="<i>Baseline</i>", xaxis_title="Prédit", yaxis_title="Réel"
                 )
                 st.plotly_chart(fig_cm_b, use_container_width=True)
 
@@ -536,9 +463,7 @@ elif page == "Résultats & Comparaisons":
                     cm_e, x=labels_cm, y=labels_cm, annotation_text=z_text_e, colorscale="Greens"
                 )
                 fig_cm_e.update_layout(
-                    title_text="<i>EO Wrapper</i>",
-                    xaxis_title="Prédit",
-                    yaxis_title="Réel",
+                    title_text="<i>EO Wrapper</i>", xaxis_title="Prédit", yaxis_title="Réel"
                 )
                 st.plotly_chart(fig_cm_e, use_container_width=True)
 
@@ -595,8 +520,8 @@ elif page == "Résultats & Comparaisons":
 # PAGE : Prédiction sur Client Sélectionné
 # ——————————————————————————————————————————————————————————————
 elif page == "Prédiction sur Client Sélectionné":
-    st.header("🔍 Résultats & Interprétation pour un Client (validation)")
-    if df_preds is not None and X_valid is not None and model_baseline is not None:
+    st.header("🔍 Résultats enregistrés pour un client (validation)")
+    if df_preds is not None:
         client_ids = df_preds.index.tolist()
         if not client_ids:
             st.warning("Aucun ID disponible dans le fichier de prédictions.")
@@ -622,173 +547,14 @@ elif page == "Prédiction sur Client Sélectionné":
                 st.write(f"Probabilité EO : **{row['proba_eo']:.4f}**")
                 st.write(f"Prédiction EO : **{row['y_pred_eo']}**")
                 st.write(f"Groupe sensible : **{row['sensitive_feature']}**")
-
-                # --- Interprétabilité locale via SHAP ---
-                import shap
-
-                try:
-                    explainer = shap.TreeExplainer(model_baseline)
-                    client_feat = X_valid.loc[[sel_id]]
-                    shap_values = explainer.shap_values(client_feat)[1]  # classe 1
-
-                    st.subheader("Interprétabilité Locale (SHAP) – Baseline")
-                    st.markdown(
-                        "Graphique des contributions individuelles des features pour la prédiction de ce client."
-                    )
-                    fig_shap = shap.plots._waterfall.waterfall_legacy(
-                        explainer.expected_value[1], shap_values[0], feature_names=client_feat.columns
-                    )
-                    st.pyplot(fig_shap)
-                except Exception as e:
-                    st.warning(f"Impossible de calculer SHAP pour le client : {e}")
-
             else:
                 st.error(f"L’ID {sel_id} n’est pas présent dans le jeu de validation.")
     else:
-        st.warning("Modèle, données X_valid ou prédictions manquantes pour l’interprétation.")
-# ——————————————————————————————————————————————————————————————
-# PAGE : Interpretabilité (nouvelle page globale)
-# ——————————————————————————————————————————————————————————————
-elif page == "Interpretabilité":
-    st.header("🔍 Interprétabilité du Modèle")
-    if (model_baseline is None or eo_wrapper is None) or (X_valid is None):
-        st.warning("Les modèles ou les données de validation ne sont pas disponibles pour l’interprétabilité.")
-    else:
-        # 1) Importances de features - Baseline
-        st.subheader("Importances de Features (Baseline)")
-        fi_base = model_baseline.feature_importances_
-        df_fi_base = pd.DataFrame({
-            "feature": X_valid.columns,
-            "importance": fi_base
-        }).sort_values("importance", ascending=False).head(20)
+        st.warning("Le fichier de prédictions n’a pas pu être chargé.")
 
-        fig_fi_base = px.bar(
-            df_fi_base,
-            x="importance",
-            y="feature",
-            orientation="h",
-            title="Top 20 Features - Baseline",
-            labels={"importance": "Importance", "feature": "Feature"},
-            color_discrete_sequence=["#1f77b4"],  # bleu foncé
-        )
-        fig_fi_base.update_layout(yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_fi_base, use_container_width=True)
-        st.markdown(
-            "**Baseline** : ces 20 variables sont celles qui impactent le plus la prédiction selon LightGBM."
-        )
-
-        # 2) Importances de features - EO wrapper
-        st.subheader("Importances de Features (EO Wrapper pondéré)")
-        # On agrège les importances de chaque estimateur pondéré
-        try:
-            # Chaque "predictor" est un LGBMClassifier interne
-            all_importances = np.zeros_like(fi_base, dtype=float)
-            total_weight = 0.0
-            for estimator, weight in zip(eo_wrapper.mitigator.predictors_, eo_wrapper.mitigator.weights_):
-                imp = estimator.feature_importances_
-                all_importances += weight * imp
-                total_weight += weight
-            # Normalisation
-            all_importances /= total_weight
-            df_fi_eo = pd.DataFrame({
-                "feature": X_valid.columns,
-                "importance": all_importances
-            }).sort_values("importance", ascending=False).head(20)
-
-            fig_fi_eo = px.bar(
-                df_fi_eo,
-                x="importance",
-                y="feature",
-                orientation="h",
-                title="Top 20 Features - EO Wrapper (pondération)",
-                labels={"importance": "Importance", "feature": "Feature"},
-                color_discrete_sequence=["#d62728"],  # rouge foncé
-            )
-            fig_fi_eo.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_fi_eo, use_container_width=True)
-            st.markdown(
-                "**EO Wrapper** : les importances calculées comme moyenne pondérée "
-                "des feature_importances_ de chaque LGBM sous-jacent."
-            )
-        except Exception:
-            st.warning("Impossible de calculer les importances EO (vérifier le wrapper).")
-
-        # 3) Explication globale via SHAP – Baseline
-        st.subheader("Résumé SHAP Global (Baseline)")
-        try:
-            import shap
-            explainer_base = shap.TreeExplainer(model_baseline)
-            shap_values_base = explainer_base.shap_values(X_valid)[1]  # classe positive
-            st.set_option('deprecation.showPyplotGlobalUse', False)
-            st.pyplot(shap.summary_plot(shap_values_base, X_valid, show=False))
-            st.markdown(
-                "**Diagramme SHAP** montrant la contribution (positive/négative) de chaque feature "
-                "sur l’ensemble des clients de validation (Baseline)."
-            )
-        except Exception as e:
-            st.warning(f"Impossible de générer le summary SHAP pour Baseline : {e}")
-
-        # 4) Explication globale approximative via SHAP – EO wrapper
-        st.subheader("Résumé SHAP Global (EO Wrapper)")
-        try:
-            import shap
-            # On définit un pseudo-explainer qui fait la moyenne pondérée des prédicteurs
-            def eo_predict_proba(X):
-                # retourne la probabilité de classe 1
-                return eo_wrapper.predict_proba(X)[:, 1]
-
-            explainer_eo = shap.Explainer(eo_predict_proba, X_valid)
-            shap_values_eo = explainer_eo(X_valid)
-            st.pyplot(shap.summary_plot(shap_values_eo.values, X_valid, show=False))
-            st.markdown(
-                "**Diagramme SHAP** approximé pour l’EO Wrapper (moyenne pondérée des estimateurs)."
-            )
-        except Exception as e:
-            st.warning(f"Impossible de générer le summary SHAP pour EO Wrapper : {e}")
-
-        # 5) Interprétabilité locale (SHAP) – Baseline vs EO pour un client
-        st.subheader("Interprétabilité Locale pour un Client")
-        client_ids = X_valid.index.tolist()
-        if client_ids:
-            selected_id = st.selectbox("Sélectionnez un ID client pour l’explication locale :", options=[str(i) for i in client_ids])
-            try:
-                sel_id = int(selected_id)
-            except ValueError:
-                sel_id = selected_id
-
-            if sel_id in X_valid.index:
-                client_feat = X_valid.loc[[sel_id]]
-                st.write(f"**Client ID : {sel_id}**")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Baseline (SHAP local)**")
-                    try:
-                        explainer_base = shap.TreeExplainer(model_baseline)
-                        shap_values_loc_base = explainer_base.shap_values(client_feat)[1]
-                        st.pyplot(shap.plots._waterfall.waterfall_legacy(
-                            explainer_base.expected_value[1], shap_values_loc_base[0], feature_names=client_feat.columns
-                        ))
-                    except Exception as e:
-                        st.warning(f"Impossible de calculer SHAP local Baseline : {e}")
-
-                with col2:
-                    st.markdown("**EO Wrapper (SHAP local approximé)**")
-                    try:
-                        explainer_eo_loc = shap.Explainer(eo_predict_proba, client_feat)
-                        shap_values_loc_eo = explainer_eo_loc(client_feat)
-                        st.pyplot(shap.plots._waterfall.waterfall_legacy(
-                            explainer_eo_loc.expected_value, shap_values_loc_eo.values[0], feature_names=client_feat.columns
-                        ))
-                    except Exception as e:
-                        st.warning(f"Impossible de calculer SHAP local EO Wrapper : {e}")
-            else:
-                st.error(f"L’ID {sel_id} n’est pas présent dans X_valid.")
-        else:
-            st.info("Aucun ID client disponible pour l’interprétation locale.")
 
 # ——————————————————————————————————————————————————————————————
-# PAGE : Analyse Intersectionnelle (MAJ pour WCAG/Accessibilité)
+# PAGE : Analyse Intersectionnelle
 # ——————————————————————————————————————————————————————————————
 elif page == "Analyse Intersectionnelle":
     st.header("🔀 Analyse Intersectionnelle")
@@ -798,6 +564,7 @@ elif page == "Analyse Intersectionnelle":
     )
 
     if df_merged is not None:
+        # 1. Sélection de la colonne catégorielle
         categorical_cols = df_merged.select_dtypes(include=["object", "category"]).columns.tolist()
         if not categorical_cols:
             st.warning("Aucune colonne catégorielle n’a été trouvée.")
@@ -807,7 +574,7 @@ elif page == "Analyse Intersectionnelle":
             if not modalities:
                 st.error(f"Aucune modalité valide pour {chosen_col}.")
             else:
-                # Filtre temporel/géographique (facultatif)
+                # 2. (Facultatif) filtre temporel/géographique si ces colonnes existent
                 if "DATE" in df_merged.columns:
                     dates = pd.to_datetime(df_merged["DATE"], errors="coerce")
                     df_merged["ANNEE"] = dates.dt.year
@@ -821,8 +588,9 @@ elif page == "Analyse Intersectionnelle":
                     if chosen_region != "Toutes":
                         df_merged = df_merged[df_merged["REGION"] == chosen_region]
 
-                # Fonction pour calculer indice de Gini
+                # 3. Fonction pour calculer indice de Gini
                 def gini_coefficient(x: np.ndarray) -> float:
+                    """Calcule le coefficient de Gini (x doit être ≥ 0)."""
                     arr = np.array(x, dtype=float)
                     if arr.size == 0 or np.all(arr == 0):
                         return np.nan
@@ -831,7 +599,7 @@ elif page == "Analyse Intersectionnelle":
                     cumvals = np.cumsum(sorted_arr)
                     return (1 + (1 / n) - 2 * np.sum(cumvals) / (cumvals[-1] * n))
 
-                # Calcul des métriques par modalité
+                # 4. Boucle par modalité pour calculer toutes les métriques
                 results = []
                 for mod in modalities:
                     subset = df_merged[df_merged[chosen_col] == mod]
@@ -844,16 +612,17 @@ elif page == "Analyse Intersectionnelle":
                     proba_e_mod = subset["proba_eo"]
                     sens_mod = subset["sensitive_feature"]
 
+                    # Taux de sélection
                     sel_base = float(y_pred_b_mod.mean())
                     sel_eo = float(y_pred_e_mod.mean())
 
+                    # EOD et DPD pour EO
                     try:
                         eod_mod = float(equalized_odds_difference(
                             y_true_mod, y_pred_e_mod, sensitive_features=sens_mod
                         ))
                     except Exception:
                         eod_mod = np.nan
-
                     try:
                         dpd_mod = float(demographic_parity_difference(
                             y_true_mod, y_pred_e_mod, sensitive_features=sens_mod
@@ -861,6 +630,7 @@ elif page == "Analyse Intersectionnelle":
                     except Exception:
                         dpd_mod = np.nan
 
+                    # Précision & rappel pour EO
                     from sklearn.metrics import precision_score, recall_score
                     try:
                         prec_mod = float(precision_score(y_true_mod, y_pred_e_mod, zero_division=0))
@@ -869,23 +639,26 @@ elif page == "Analyse Intersectionnelle":
                         prec_mod = np.nan
                         rec_mod = np.nan
 
-                    # Calcul du coefficient de Gini pour chaque groupe sensible
+                    # Gini des scores EO par groupe
                     gini_values = {}
                     for grp in sens_mod.dropna().unique():
                         scores_grp = proba_e_mod[sens_mod == grp].values
                         gini_values[f"Gini_{grp}"] = float(gini_coefficient(scores_grp))
 
-                    results.append({
-                        "Modalité": mod,
-                        "SelRate_Baseline": sel_base,
-                        "SelRate_EO": sel_eo,
-                        "EOD_EO": eod_mod,
-                        "DPD_EO": dpd_mod,
-                        "Precision_EO": prec_mod,
-                        "Recall_EO": rec_mod,
-                        **gini_values,
-                    })
+                    results.append(
+                        {
+                            "Modalité": mod,
+                            "SelRate_Baseline": sel_base,
+                            "SelRate_EO": sel_eo,
+                            "EOD_EO": eod_mod,
+                            "DPD_EO": dpd_mod,
+                            "Precision_EO": prec_mod,
+                            "Recall_EO": rec_mod,
+                            **gini_values,
+                        }
+                    )
 
+                # 5. DataFrame des résultats
                 df_inter = pd.DataFrame(results).set_index("Modalité")
                 st.subheader(f"Métriques par modalité de '{chosen_col}'")
                 st.dataframe(
@@ -893,8 +666,7 @@ elif page == "Analyse Intersectionnelle":
                     use_container_width=True,
                 )
 
-                # 1) Taux de sélection : on ajoute un label textuel sur chaque barre,
-                #    et on utilise une palette à contraste élevé
+                # 6. Graphique : taux de sélection
                 fig_inter_sel = px.bar(
                     df_inter.reset_index().melt(
                         id_vars="Modalité",
@@ -907,68 +679,31 @@ elif page == "Analyse Intersectionnelle":
                     color="Modèle",
                     barmode="group",
                     title=f"Taux de sélection par modalités de '{chosen_col}'",
-                    labels={"Modalité": chosen_col, "Taux de sélection": "Taux de sélection"},
-                    color_discrete_sequence=["#00429d", "#ffa600"],  # bleu foncé & orange vif
-                    text="Taux de sélection",  # affichage du pourcentage sur chaque barre
-                )
-                fig_inter_sel.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-                fig_inter_sel.update_layout(
-                    uniformtext_minsize=8,
-                    uniformtext_mode="hide",
-                    legend_title_text="Modèle",
-                )
-                # Description textuelle pour les lecteurs d'écran
-                st.markdown(
-                    f"**Description** : Barres comparant les taux de sélection Baseline "
-                    f"(bleu foncé) et EO (orange vif) pour chaque modalité de '{chosen_col}'."
+                    labels={"Modalité": chosen_col},
                 )
                 st.plotly_chart(fig_inter_sel, use_container_width=True)
 
-                # 2) EOD pour EO : barres avec annotation de la valeur
+                # 7. Graphique : EOD pour EO
                 fig_inter_eod = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
                     y="EOD_EO",
                     title=f"EOD (EO mitigé) par modalités de '{chosen_col}'",
-                    labels={"Modalité": chosen_col, "EOD_EO": "Equalized Odds Diff (EO)"},
-                    color_discrete_sequence=["#800080"],  # violet foncé à bon contraste
-                    text="EOD_EO",
-                )
-                fig_inter_eod.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-                fig_inter_eod.update_layout(
-                    yaxis=dict(range=[df_inter["EOD_EO"].min() - 0.05, df_inter["EOD_EO"].max() + 0.05]),
-                    uniformtext_minsize=8,
-                    uniformtext_mode="hide",
-                )
-                st.markdown(
-                    f"**Description** : Barres violettes représentant l’EOD du modèle EO "
-                    f"pour chaque modalité de '{chosen_col}', annotées avec la valeur numérique."
+                    labels={"EOD_EO": "Equalized Odds Diff (EO)"},
                 )
                 st.plotly_chart(fig_inter_eod, use_container_width=True)
 
-                # 3) DPD pour EO : barres avec annotation
+                # 8. Graphique : DPD pour EO
                 fig_inter_dpd = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
                     y="DPD_EO",
                     title=f"DPD (EO mitigé) par modalités de '{chosen_col}'",
-                    labels={"Modalité": chosen_col, "DPD_EO": "Demographic Parity Diff (EO)"},
-                    color_discrete_sequence=["#1b7837"],  # vert foncé
-                    text="DPD_EO",
-                )
-                fig_inter_dpd.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-                fig_inter_dpd.update_layout(
-                    yaxis=dict(range=[df_inter["DPD_EO"].min() - 0.05, df_inter["DPD_EO"].max() + 0.05]),
-                    uniformtext_minsize=8,
-                    uniformtext_mode="hide",
-                )
-                st.markdown(
-                    f"**Description** : Barres vertes illustrant la DPD du modèle EO "
-                    f"pour chaque modalité de '{chosen_col}', annotées avec la valeur."
+                    labels={"DPD_EO": "Demographic Parity Diff (EO)"},
                 )
                 st.plotly_chart(fig_inter_dpd, use_container_width=True)
 
-                # 4) Précision & rappel : barres côte à côte, avec annotation
+                # 9. Graphique : précision & rappel pour EO
                 df_pr_rec = df_inter[["Precision_EO", "Recall_EO"]].reset_index().melt(
                     id_vars="Modalité",
                     value_vars=["Precision_EO", "Recall_EO"],
@@ -982,54 +717,11 @@ elif page == "Analyse Intersectionnelle":
                     color="Métrique",
                     barmode="group",
                     title=f"Précision & Rappel (EO) par modalités de '{chosen_col}'",
-                    labels={"Modalité": chosen_col, "Score": "Score"},
-                    color_discrete_map={"Precision_EO": "#a50026", "Recall_EO": "#fdae61"},  # rouge vif & orange clair
-                    text="Score",
-                )
-                fig_pr_rec.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-                fig_pr_rec.update_layout(
-                    uniformtext_minsize=8,
-                    uniformtext_mode="hide",
-                    legend_title_text="Métrique",
-                )
-                st.markdown(
-                    f"**Description** : Comparaison côte à côte de la précision "
-                    f"(rouge vif) et du rappel (orange clair) pour chaque modalité."
+                    labels={"Modalité": chosen_col, "Score": "Valeur"},
                 )
                 st.plotly_chart(fig_pr_rec, use_container_width=True)
 
-                # 5) Coefficients de Gini : barres groupées par groupe sensible
-                gini_cols = [c for c in df_inter.columns if c.startswith("Gini_")]
-                if gini_cols:
-                    df_gini = (
-                        df_inter[gini_cols]
-                        .reset_index()
-                        .melt(id_vars="Modalité", value_vars=gini_cols, var_name="Groupe", value_name="Gini")
-                    )
-                    df_gini["Groupe"] = df_gini["Groupe"].str.replace(r"^Gini_", "", regex=True)
-                    fig_gini = px.bar(
-                        df_gini,
-                        x="Modalité",
-                        y="Gini",
-                        color="Groupe",
-                        barmode="group",
-                        title=f"Coefficients de Gini des scores EO par modalités de '{chosen_col}'",
-                        labels={"Modalité": chosen_col, "Gini": "Coefficient de Gini"},
-                        color_discrete_sequence=px.colors.qualitative.Dark24,  # palette qualitatives à contraste élevé
-                        text="Gini",
-                    )
-                    fig_gini.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-                    fig_gini.update_layout(
-                        uniformtext_minsize=8,
-                        uniformtext_mode="hide",
-                    )
-                    st.markdown(
-                        f"**Description** : Coefficients de Gini des scores EO, "
-                        f"séparés par groupe sensible, pour chaque modalité."
-                    )
-                    st.plotly_chart(fig_gini, use_container_width=True)
-
-                # 6) Distribution des probabilités EO par groupe (hachures + couleur)
+                # 10. Distribution des probabilités EO par groupe pour chaque modalité
                 if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité"):
                     for mod in modalities:
                         subset = df_merged[df_merged[chosen_col] == mod]
@@ -1039,24 +731,16 @@ elif page == "Analyse Intersectionnelle":
                             subset,
                             x="proba_eo",
                             color="sensitive_feature",
-                            barmode="overlay",
                             nbins=30,
-                            pattern_shape="sensitive_feature",  # ajoute hachures selon le groupe
-                            pattern_shape_sequence=["/", "\\"],    # deux motifs de hachures distincts
+                            barmode="overlay",
                             title=f"Distribution des probabilités EO pour la modalité '{mod}'",
                             labels={"proba_eo": "Score EO", "sensitive_feature": "Groupe sensible"},
-                            color_discrete_sequence=px.colors.qualitative.Set2,  # palette alternative à contraste élevé
-                        )
-                        st.markdown(
-                            f"**Description** : Répartition des scores EO pour la modalité '{mod}', "
-                            "comparant les groupes sensibles via couleur et motif."
                         )
                         st.plotly_chart(fig_hist, use_container_width=True)
 
-                # 7) Matrice de confusion pour EO par modalité (texte + alt text)
+                # 11. Matrice de confusion pour EO par modalité
                 if st.checkbox("Afficher la matrice de confusion EO pour chaque modalité"):
                     from sklearn.metrics import confusion_matrix
-
                     for mod in modalities:
                         subset = df_merged[df_merged[chosen_col] == mod]
                         if subset.empty:
@@ -1067,24 +751,16 @@ elif page == "Analyse Intersectionnelle":
                         labels = ["Non-Défaut (0)", "Défaut (1)"]
                         z_text = [[str(entry) for entry in row] for row in cm]
                         fig_cm = ff.create_annotated_heatmap(
-                            cm,
-                            x=labels,
-                            y=labels,
-                            annotation_text=z_text,
-                            colorscale="Greys",
+                            cm, x=labels, y=labels, annotation_text=z_text, colorscale="Purples"
                         )
                         fig_cm.update_layout(
                             title_text=f"Matrice de confusion EO pour '{chosen_col}' = '{mod}'",
                             xaxis_title="Prédit",
                             yaxis_title="Réel",
                         )
-                        st.markdown(
-                            f"**Description** : Matrice de confusion EO pour la modalité '{mod}', "
-                            "montrant TN, FP, FN, TP avec légende textuelle."
-                        )
                         st.plotly_chart(fig_cm, use_container_width=True)
 
-                # 8) Export du rapport Excel
+                # 12. Export du rapport Excel
                 buffer = None
                 if st.button("📥 Exporter ce tableau au format Excel"):
                     import io
@@ -1100,7 +776,7 @@ elif page == "Analyse Intersectionnelle":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                # 9) Comparaison “avant/après” biais artificiel
+                # 13. Comparaison “avant/après” biais artificiel (exemple simple)
                 if st.checkbox("Comparer avant/après injection d’un biais artificiel"):
                     group_to_bias = st.selectbox(
                         "Choisir le groupe sensible à biaiser :", sens_mod.dropna().unique().tolist()
@@ -1109,8 +785,9 @@ elif page == "Analyse Intersectionnelle":
                     mask = (df_merged["sensitive_feature"] == group_to_bias) & (df_merged["y_true"] == 1)
                     idxs = df_merged[mask].sample(frac=rate_to_flip / 100, random_state=42).index
                     df_biased = df_merged.copy()
-                    df_biased.loc[idxs, "y_true"] = 0
+                    df_biased.loc[idxs, "y_true"] = 0  # on fait passer ces positifs à négatifs
 
+                    # Recalculer EOD global avant/après pour EO
                     try:
                         eod_global_orig = equalized_odds_difference(
                             df_merged["y_true"],
@@ -1129,7 +806,6 @@ elif page == "Analyse Intersectionnelle":
 
     else:
         st.warning("Fusion des données application + prédictions impossible.")
-
 
 
 # ——————————————————————————————————————————————————————————————
