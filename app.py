@@ -534,6 +534,9 @@ elif page == "Prédiction sur Client Sélectionné":
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Intersectionnelle (MAJ avec EOD_EO, DPD, precision/recall, histogrammes)
 # ——————————————————————————————————————————————————————————————
+# ——————————————————————————————————————————————————————————————
+# PAGE : Analyse Intersectionnelle (MAJ complète)
+# ——————————————————————————————————————————————————————————————
 elif page == "Analyse Intersectionnelle":
     st.header("🔀 Analyse Intersectionnelle")
     st.caption(
@@ -542,6 +545,7 @@ elif page == "Analyse Intersectionnelle":
     )
 
     if df_merged is not None:
+        # 1. Sélection de la colonne catégorielle
         categorical_cols = df_merged.select_dtypes(include=["object", "category"]).columns.tolist()
         if not categorical_cols:
             st.warning("Aucune colonne catégorielle n’a été trouvée.")
@@ -551,49 +555,77 @@ elif page == "Analyse Intersectionnelle":
             if not modalities:
                 st.error(f"Aucune modalité valide pour {chosen_col}.")
             else:
+                # 2. (Facultatif) filtre temporel/géographique si ces colonnes existent
+                filters = {}
+                if "DATE" in df_merged.columns:
+                    dates = pd.to_datetime(df_merged["DATE"], errors="coerce")
+                    df_merged["ANNEE"] = dates.dt.year
+                    years = sorted(df_merged["ANNEE"].dropna().unique().astype(int).tolist())
+                    chosen_year = st.selectbox("Filtrer par année :", ["Toutes"] + [str(y) for y in years])
+                    if chosen_year != "Toutes":
+                        df_merged = df_merged[df_merged["ANNEE"] == int(chosen_year)]
+                if "REGION" in df_merged.columns:
+                    regions = df_merged["REGION"].dropna().unique().tolist()
+                    chosen_region = st.selectbox("Filtrer par région :", ["Toutes"] + regions)
+                    if chosen_region != "Toutes":
+                        df_merged = df_merged[df_merged["REGION"] == chosen_region]
+
+                # 3. Fonction pour calculer indice de Gini
+                def gini_coefficient(x: np.ndarray) -> float:
+                    """Calcule le coefficient de Gini (x doit être ≥ 0)."""
+                    arr = np.array(x, dtype=float)
+                    if arr.size == 0 or np.all(arr == 0):
+                        return np.nan
+                    sorted_arr = np.sort(arr)
+                    n = len(arr)
+                    cumvals = np.cumsum(sorted_arr)
+                    return (1 + (1 / n) - 2 * np.sum(cumvals) / (cumvals[-1] * n))
+
+                # 4. Boucle par modalité pour calculer toutes les métriques
                 results = []
                 for mod in modalities:
                     subset = df_merged[df_merged[chosen_col] == mod]
                     if subset.empty:
                         continue
 
-                    # Taux de sélection pour Baseline et EO
-                    sel_base = subset["y_pred_baseline"].mean()
-                    sel_eo = subset["y_pred_eo"].mean()
+                    y_true_mod = subset["y_true"]
+                    y_pred_b_mod = subset["y_pred_baseline"]
+                    y_pred_e_mod = subset["y_pred_eo"]
+                    proba_e_mod = subset["proba_eo"]
+                    sens_mod = subset["sensitive_feature"]
 
-                    # EOD sur le modèle mitigé (EO)
+                    # Taux de sélection
+                    sel_base = float(y_pred_b_mod.mean())
+                    sel_eo = float(y_pred_e_mod.mean())
+
+                    # EOD et DPD pour EO
                     try:
-                        eod_mod = equalized_odds_difference(
-                            subset["y_true"],
-                            subset["y_pred_eo"],
-                            sensitive_features=subset["sensitive_feature"],
-                        )
+                        eod_mod = float(equalized_odds_difference(
+                            y_true_mod, y_pred_e_mod, sensitive_features=sens_mod
+                        ))
                     except Exception:
                         eod_mod = np.nan
-
-                    # DPD sur le modèle mitigé (EO)
                     try:
-                        dpd_mod = demographic_parity_difference(
-                            subset["y_true"],
-                            subset["y_pred_eo"],
-                            sensitive_features=subset["sensitive_feature"],
-                        )
+                        dpd_mod = float(demographic_parity_difference(
+                            y_true_mod, y_pred_e_mod, sensitive_features=sens_mod
+                        ))
                     except Exception:
                         dpd_mod = np.nan
 
-                    # Précision & rappel pour le modèle mitigé (EO)
+                    # Précision & rappel pour EO
                     from sklearn.metrics import precision_score, recall_score
-
                     try:
-                        prec_mod = precision_score(
-                            subset["y_true"], subset["y_pred_eo"], zero_division=0
-                        )
-                        rec_mod = recall_score(
-                            subset["y_true"], subset["y_pred_eo"], zero_division=0
-                        )
+                        prec_mod = float(precision_score(y_true_mod, y_pred_e_mod, zero_division=0))
+                        rec_mod = float(recall_score(y_true_mod, y_pred_e_mod, zero_division=0))
                     except Exception:
                         prec_mod = np.nan
                         rec_mod = np.nan
+
+                    # Gini des scores EO par groupe
+                    gini_values = {}
+                    for grp in sens_mod.dropna().unique():
+                        scores_grp = proba_e_mod[sens_mod == grp].values
+                        gini_values[f"Gini_{grp}"] = float(gini_coefficient(scores_grp))
 
                     results.append(
                         {
@@ -604,9 +636,11 @@ elif page == "Analyse Intersectionnelle":
                             "DPD_EO": dpd_mod,
                             "Precision_EO": prec_mod,
                             "Recall_EO": rec_mod,
+                            **gini_values,
                         }
                     )
 
+                # 5. DataFrame des résultats
                 df_inter = pd.DataFrame(results).set_index("Modalité")
                 st.subheader(f"Métriques par modalité de '{chosen_col}'")
                 st.dataframe(
@@ -614,7 +648,7 @@ elif page == "Analyse Intersectionnelle":
                     use_container_width=True,
                 )
 
-                # Graphique comparatif des taux de sélection
+                # 6. Graphique : taux de sélection
                 fig_inter_sel = px.bar(
                     df_inter.reset_index().melt(
                         id_vars="Modalité",
@@ -631,7 +665,7 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_inter_sel, use_container_width=True)
 
-                # Graphique EOD pour le modèle mitigé (EO)
+                # 7. Graphique : EOD pour EO
                 fig_inter_eod = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
@@ -641,7 +675,7 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_inter_eod, use_container_width=True)
 
-                # Graphique DPD pour le modèle mitigé (EO)
+                # 8. Graphique : DPD pour EO
                 fig_inter_dpd = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
@@ -651,25 +685,25 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_inter_dpd, use_container_width=True)
 
-                # Graphique Précision & Rappel pour EO
+                # 9. Graphique : précision & rappel pour EO
                 df_pr_rec = df_inter[["Precision_EO", "Recall_EO"]].reset_index().melt(
                     id_vars="Modalité",
                     value_vars=["Precision_EO", "Recall_EO"],
                     var_name="Métrique",
-                    value_name="Valeur",
+                    value_name="Score",
                 )
                 fig_pr_rec = px.bar(
                     df_pr_rec,
                     x="Modalité",
-                    y="Valeur",
+                    y="Score",
                     color="Métrique",
                     barmode="group",
                     title=f"Précision & Rappel (EO) par modalités de '{chosen_col}'",
-                    labels={"Modalité": chosen_col, "Valeur": "Score"},
+                    labels={"Modalité": chosen_col, "Score": "Valeur"},
                 )
                 st.plotly_chart(fig_pr_rec, use_container_width=True)
 
-                # Optionnel : distribution des probabilités EO par groupe sensible
+                # 10. Distribution des probabilités EO par groupe pour chaque modalité
                 if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité"):
                     for mod in modalities:
                         subset = df_merged[df_merged[chosen_col] == mod]
@@ -685,6 +719,73 @@ elif page == "Analyse Intersectionnelle":
                             labels={"proba_eo": "Score EO", "sensitive_feature": "Groupe sensible"},
                         )
                         st.plotly_chart(fig_hist, use_container_width=True)
+
+                # 11. Matrice de confusion pour EO par modalité
+                if st.checkbox("Afficher la matrice de confusion EO pour chaque modalité"):
+                    from sklearn.metrics import confusion_matrix
+                    for mod in modalities:
+                        subset = df_merged[df_merged[chosen_col] == mod]
+                        if subset.empty:
+                            continue
+                        y_true_mod = subset["y_true"]
+                        y_pred_e_mod = subset["y_pred_eo"]
+                        cm = confusion_matrix(y_true_mod, y_pred_e_mod)
+                        labels = ["Non-Défaut (0)", "Défaut (1)"]
+                        z_text = [[str(entry) for entry in row] for row in cm]
+                        fig_cm = ff.create_annotated_heatmap(
+                            cm, x=labels, y=labels, annotation_text=z_text, colorscale="Purples"
+                        )
+                        fig_cm.update_layout(
+                            title_text=f"Matrice de confusion EO pour '{chosen_col}' = '{mod}'",
+                            xaxis_title="Prédit",
+                            yaxis_title="Réel",
+                        )
+                        st.plotly_chart(fig_cm, use_container_width=True)
+
+                # 12. Export du rapport Excel
+                buffer = None
+                if st.button("📥 Exporter ce tableau au format Excel"):
+                    import io
+
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                        df_inter.to_excel(writer, sheet_name="Intersectionnalité")
+                    buffer.seek(0)
+                    st.download_button(
+                        label="Télécharger le fichier Excel",
+                        data=buffer,
+                        file_name="rapport_intersectionnalite.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+                # 13. Comparaison “avant/après” biais artificiel (exemple simple)
+                if st.checkbox("Comparer avant/après injection d’un biais artificiel"):
+                    # Exemple : on inverse 10% des labels positifs dans un groupe sensible
+                    group_to_bias = st.selectbox(
+                        "Choisir le groupe sensible à biaiser :", sens_mod.dropna().unique().tolist()
+                    )
+                    rate_to_flip = st.slider("Pourcentage de labels positifs à inverser %", 0, 100, 10)
+                    mask = (df_merged["sensitive_feature"] == group_to_bias) & (df_merged["y_true"] == 1)
+                    idxs = df_merged[mask].sample(frac=rate_to_flip / 100, random_state=42).index
+                    df_biased = df_merged.copy()
+                    df_biased.loc[idxs, "y_true"] = 0  # on fait passer ces positifs à négatifs
+
+                    # Recalculer EOD global avant/après pour EO
+                    try:
+                        eod_global_orig = equalized_odds_difference(
+                            df_merged["y_true"],
+                            df_merged["y_pred_eo"],
+                            sensitive_features=df_merged["sensitive_feature"],
+                        )
+                        eod_global_biased = equalized_odds_difference(
+                            df_biased["y_true"],
+                            df_biased["y_pred_eo"],
+                            sensitive_features=df_biased["sensitive_feature"],
+                        )
+                        st.write(f"- EOD global (avant biais) : **{eod_global_orig:.3f}**")
+                        st.write(f"- EOD global (après biais) : **{eod_global_biased:.3f}**")
+                    except Exception as ex:
+                        st.error(f"Erreur lors de la comparaison biais : {ex}")
 
     else:
         st.warning("Fusion des données application + prédictions impossible.")
