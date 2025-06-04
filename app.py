@@ -177,6 +177,21 @@ if page == "Contexte & Objectifs":
         Obtenir un modèle performant mais qui reste juste entre les différents groupes (ex : hommes/femmes).
         """
     )
+    st.subheader("Fairlearn")
+    st.markdown(
+        """
+        **Fairlearn** est une librairie open source développée par Microsoft pour évaluer et améliorer l’équité des modèles de Machine Learning.  
+        Elle fournit :
+        - Des métriques d’équité (DPD, EOD, etc.) pour détecter d’éventuels biais.  
+        - Un module de réduction (« reductions ») qui ajuste plusieurs estimateurs afin de satisfaire des contraintes d’équité, comme **Equalized Odds** ou **Demographic Parity**.  
+        - Des outils de visualisation pour comparer différentes stratégies de mitigation.  
+
+        Pour en savoir plus, consultez la documentation officielle de Fairlearn :  
+        [https://fairlearn.org](https://fairlearn.org)  
+        (ou le dépôt GitHub)  
+        """
+    )
+
     st.subheader("Papiers de référence")
     with st.expander("Hardt, Price & Srebro (2016) – Equalized Odds"):
         st.write(
@@ -210,7 +225,6 @@ if page == "Contexte & Objectifs":
           > Méthode pour trouver un compromis entre performance et équité, en combinant plusieurs modèles de façon intelligente.
         """
     )
-
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Méthodologie
