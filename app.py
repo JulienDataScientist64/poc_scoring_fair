@@ -16,6 +16,7 @@ import plotly.figure_factory as ff
 from fairlearn.metrics import (
     MetricFrame,
     selection_rate as fairlearn_selection_rate,
+    demographic_parity_difference,
     equalized_odds_difference,
 )
 
@@ -58,8 +59,7 @@ def download_if_missing(filename: str, url: str) -> None:
             st.error(f"Erreur lors du téléchargement de {filename} : {e}")
             if hasattr(e, "response") and getattr(e, "response", None) is not None:
                 st.error(
-                    f"Réponse du serveur : "
-                    f"{e.response.status_code} – {e.response.text}"
+                    f"Réponse du serveur : {e.response.status_code} – {e.response.text}"
                 )
             st.stop()
 
@@ -133,11 +133,9 @@ if df_preds is not None:
     try:
         df_application = pd.read_csv(RAW_DATA_FILENAME, index_col=0)
         df_application = sanitize_feature_names(df_application)
-        # On joint en utilisant l’index ; df_preds.index correspond à X_valid.index,
-        # qui provient de l’index de application_train initial. 
         df_merged = df_application.join(df_preds, how="inner")
     except Exception as e:
-        st.error(f"Erreur lors de la fusion application+predictions : {e}")
+        st.error(f"Erreur lors de la fusion application+prédictions : {e}")
         df_merged = None
 else:
     df_merged = None
@@ -147,6 +145,8 @@ else:
 # ——————————————————————————————————————————————————————————————
 st.sidebar.title("📊 POC Scoring Équitable")
 page_options: List[str] = [
+    "Contexte & Objectifs",
+    "Méthodologie",
     "Analyse Exploratoire (EDA)",
     "Résultats & Comparaisons",
     "Prédiction sur Client Sélectionné",
@@ -167,11 +167,104 @@ page: str = st.sidebar.radio(
 if page_options.index(page) != st.session_state[session_key]:
     st.session_state[session_key] = page_options.index(page)
 
+# ——————————————————————————————————————————————————————————————
+# PAGE : Contexte & Objectifs
+# ——————————————————————————————————————————————————————————————
+if page == "Contexte & Objectifs":
+    st.header("Contexte & Références")
+    st.markdown(
+        """
+        **Pourquoi l’équité dans le scoring crédit ?**
+        - Les régulateurs (comme l’IA Act et les lois anti-discrimination) imposent que les modèles de scoring crédit n’avantagent ni ne désavantagent un groupe (par exemple le genre).
+        - Ce POC compare deux approches :
+          1. **LightGBM classique** (modèle standard de machine learning)
+          2. **LightGBM associé à Fairlearn EG-EO** (ajout d’une contrainte d’équité sur la prédiction)
+
+        **Objectif métier :**
+        Obtenir un modèle performant mais qui reste juste entre les différents groupes (ex : hommes/femmes).
+        """
+    )
+    st.subheader("Papiers de référence")
+    with st.expander("Hardt, Price & Srebro (2016) – Equalized Odds"):
+        st.write(
+            """
+            **Résumé pédagogique :**
+            - Equalized Odds impose que le taux de bonne détection (rappel) soit similaire pour chaque groupe (par exemple hommes et femmes), pour les personnes qui remboursent ou non.
+            - Un modèle respectant bien Equalized Odds limite donc les écarts d’erreur selon le groupe sensible.
+            """
+        )
+        st.markdown("[Lire le papier (arXiv)](https://arxiv.org/abs/1610.02413)")
+
+    with st.expander("Agarwal et al. (2019) – Exponentiated Gradient"):
+        st.write(
+            """
+            **Résumé pédagogique :**
+            - L’algorithme Exponentiated Gradient combine plusieurs modèles en ajustant leurs poids pour trouver un compromis optimal entre performance et équité.
+            - À chaque étape, il renforce les modèles qui respectent le mieux la contrainte d’équité.
+            - Cette méthode permet d’obtenir un modèle global qui ne discrimine pas, tout en gardant un bon niveau de prédiction.
+            """
+        )
+        st.markdown("[Lire le papier (ACM)](https://dl.acm.org/doi/10.1145/3287560.3287572)")
+
+    st.subheader("Métriques d'équité utilisées")
+    st.markdown(
+        """
+        - **Demographic Parity Difference (DPD) :**
+          > Mesure la différence de taux d’attribution positive du crédit entre groupes (idéal : zéro différence).
+        - **Equalized Odds Difference (EOD) :**
+          > Mesure l’écart de performance du modèle (sensibilité/spécificité) selon le groupe sensible. Un modèle équitable aura un EOD proche de zéro.
+        - **Exponentiated Gradient (EG) :**
+          > Méthode pour trouver un compromis entre performance et équité, en combinant plusieurs modèles de façon intelligente.
+        """
+    )
+
+# ——————————————————————————————————————————————————————————————
+# PAGE : Méthodologie
+# ——————————————————————————————————————————————————————————————
+elif page == "Méthodologie":
+    st.header("Méthodologie")
+    st.subheader("Données & Préparation")
+    st.write(
+        """
+        - **Jeu de données** : Home Credit (~300 000 clients, 120 variables socio-économiques).
+        - Découpage en 3 parties : apprentissage (80%), validation (10%), test (10%).
+        - **Nettoyage** : gestion des valeurs bizarres ou manquantes, suppression des doublons, filtrage sur le genre, plafonnement des revenus extrêmes.
+        - **Nouvelles variables** : création de ratios simples (ex : mensualité/revenu, crédit/revenu), transformation de l’âge.
+        - **Mise en forme** : transformation des variables catégorielles, découpage de l’âge en tranches, etc.
+        - **Encodage & imputation** : gestion automatique des valeurs manquantes et transformation des variables pour les modèles.
+        - **Nettoyage des noms de features** : standardisation des noms de variables pour éviter les problèmes techniques (e.g., caractères spéciaux).
+        """
+    )
+    st.subheader("Modèle de base (LightGBM)")
+    st.write(
+        """
+        - Modèle classique de machine learning qui apprend à prédire le défaut de remboursement.
+        - Prend en compte le déséquilibre entre bons et mauvais payeurs.
+        - Le seuil de décision (pour dire “défaut” ou “pas défaut”) est choisi de façon optimale sur la validation.
+        """
+    )
+    st.subheader("Modèle équitable (EG-EO)")
+    st.write(
+        """
+        - Modèle LightGBM ajusté avec Fairlearn pour garantir l’équité entre hommes et femmes (variable sensible CODE_GENDER).
+        - La méthode ExponentiatedGradient avec la contrainte EqualizedOdds combine plusieurs modèles et ajuste leurs poids pour minimiser les écarts de traitement selon le genre.
+        - On fixe une tolérance maximale sur l’écart d’équité autorisé (eps).
+        - Le modèle final est un "wrapper" qui encapsule cette logique et un seuil de décision optimisé.
+        """
+    )
+    st.subheader("Évaluation et comparaison")
+    st.write(
+        """
+        - **Performances mesurées** : capacité à bien trier les clients (AUC, précision, rappel, F1).
+        - **Équité** : on vérifie que le modèle ne favorise pas un groupe par rapport à l’autre, via des métriques spécifiques (DPD, EOD).
+        - **Analyse détaillée** : matrice de confusion et taux de sélection par groupe.
+        """
+    )
 
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Exploratoire (EDA)
 # ——————————————————————————————————————————————————————————————
-if page == "Analyse Exploratoire (EDA)":
+elif page == "Analyse Exploratoire (EDA)":
     st.header("🔎 Analyse Exploratoire des Données (EDA)")
     st.caption(
         f"Basée sur un échantillon de "
@@ -253,7 +346,7 @@ elif page == "Résultats & Comparaisons":
     st.header("📊 Résultats comparatifs (jeu de validation)")
     if df_preds is not None:
         try:
-            # Calcul des métriques globales
+            # Extraction des colonnes du DataFrame de prédictions
             y_true = df_preds["y_true"]
             y_pred_b = df_preds["y_pred_baseline"]
             y_pred_e = df_preds["y_pred_eo"]
@@ -261,7 +354,7 @@ elif page == "Résultats & Comparaisons":
             proba_e = df_preds["proba_eo"]
             sens = df_preds["sensitive_feature"]
 
-            # Metrics classification
+            # Importations pour les metrics
             from sklearn.metrics import (
                 roc_auc_score,
                 accuracy_score,
@@ -271,6 +364,7 @@ elif page == "Résultats & Comparaisons":
                 confusion_matrix,
             )
 
+            # --- Classification Metrics ---
             metrics_b = {
                 "AUC": roc_auc_score(y_true, proba_b),
                 "Accuracy": accuracy_score(y_true, y_pred_b),
@@ -297,7 +391,7 @@ elif page == "Résultats & Comparaisons":
             st.subheader("Métriques de classification")
             st.dataframe(df_metrics.style.format("{:.3f}", na_rep="-"), use_container_width=True)
 
-            # Fairness metrics
+            # --- Fairness Metrics (DPD & EOD) ---
             fair_b = {
                 "DPD": demographic_parity_difference(y_true, y_pred_b, sensitive_features=sens),
                 "EOD": equalized_odds_difference(y_true, y_pred_b, sensitive_features=sens),
@@ -315,7 +409,7 @@ elif page == "Résultats & Comparaisons":
             st.subheader("Métriques d’équité (global)")
             st.dataframe(df_fair.style.format("{:.3f}", na_rep="-"), use_container_width=True)
 
-            # Matrices de confusion
+            # — Matrices de confusion —
             st.subheader("Matrices de Confusion")
             cm_b = confusion_matrix(y_true, y_pred_b)
             cm_e = confusion_matrix(y_true, y_pred_e)
@@ -349,7 +443,7 @@ elif page == "Résultats & Comparaisons":
                 )
                 st.plotly_chart(fig_cm_e, use_container_width=True)
 
-            # Taux de sélection par groupe sensible
+            # — Taux de sélection par groupe sensible —
             st.subheader("Taux de sélection par groupe sensible")
             mf_b = MetricFrame(
                 metrics=fairlearn_selection_rate,
@@ -373,7 +467,7 @@ elif page == "Résultats & Comparaisons":
             ).set_index("Groupe sensible")
             st.dataframe(df_sel.style.format("{:.3f}"), use_container_width=True)
 
-            # Barplot des taux de sélection
+            # — Barplot des taux de sélection —
             df_sel_plot = df_sel.reset_index().melt(
                 id_vars="Groupe sensible",
                 value_vars=["Taux sélection Baseline", "Taux sélection EO Wrapper"],
@@ -446,29 +540,24 @@ elif page == "Analyse Intersectionnelle":
     )
 
     if df_merged is not None:
-        # Récupérer uniquement les colonnes catégorielles
         categorical_cols = df_merged.select_dtypes(include=["object", "category"]).columns.tolist()
         if not categorical_cols:
             st.warning("Aucune colonne catégorielle n’a été trouvée.")
         else:
             chosen_col = st.selectbox("Choisis une colonne catégorielle :", categorical_cols)
-            # Filtrer les modalités non-nulles
             modalities = df_merged[chosen_col].dropna().unique().tolist()
             if not modalities:
                 st.error(f"Aucune modalité valide pour {chosen_col}.")
             else:
-                # Calculer, pour chaque modalité, le taux de sélection et l’EOD
                 results = []
                 for mod in modalities:
                     subset = df_merged[df_merged[chosen_col] == mod]
                     if subset.empty:
                         continue
 
-                    # Sélection rate pour Baseline et EO
                     sel_base = subset["y_pred_baseline"].mean()
                     sel_eo = subset["y_pred_eo"].mean()
 
-                    # EOD (différence d’égalisation des odds) dans la modalité
                     try:
                         eod_mod = equalized_odds_difference(
                             subset["y_true"],
@@ -491,7 +580,6 @@ elif page == "Analyse Intersectionnelle":
                 st.subheader(f"Métriques par modalité de '{chosen_col}'")
                 st.dataframe(df_inter.style.format({col: "{:.3f}" for col in df_inter.columns}), use_container_width=True)
 
-                # Graphique comparatif des taux de sélection
                 fig_inter_sel = px.bar(
                     df_inter.reset_index().melt(
                         id_vars="Modalité",
@@ -508,7 +596,6 @@ elif page == "Analyse Intersectionnelle":
                 )
                 st.plotly_chart(fig_inter_sel, use_container_width=True)
 
-                # Graphique EOD
                 fig_inter_eod = px.bar(
                     df_inter.reset_index(),
                     x="Modalité",
@@ -547,7 +634,6 @@ elif page == "Courbes ROC & Probabilités - Baseline":
             fig_roc.add_shape(type="line", x0=0, x1=1, y0=0, y1=1, line=dict(dash="dash", color="gray"))
             st.plotly_chart(fig_roc, use_container_width=True)
 
-            # Distribution des probabilités
             df_dist = pd.DataFrame({"proba_baseline": proba_b, "y_true": y_true.astype(str)})
             fig_dist = px.histogram(
                 df_dist,
@@ -594,7 +680,6 @@ elif page == "Courbes ROC & Probabilités - EO Wrapper":
             fig_roc_e.add_shape(type="line", x0=0, x1=1, y0=0, y1=1, line=dict(dash="dash", color="gray"))
             st.plotly_chart(fig_roc_e, use_container_width=True)
 
-            # Distribution des probabilités EO
             df_dist_e = pd.DataFrame({"proba_eo": proba_e, "y_true": y_true.astype(str)})
             fig_dist_e = px.histogram(
                 df_dist_e,
