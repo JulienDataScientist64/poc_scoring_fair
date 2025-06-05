@@ -96,7 +96,7 @@ def sanitize_feature_names(df_input: pd.DataFrame) -> pd.DataFrame:
 # CONSTANTES ET CHEMINS
 # ——————————————————————————————————————————————————————————————
 RAW_DATA_FILENAME: str = "application_train.csv"
-PREDICTIONS_FILENAME: str = "predictions_validation.parquet"
+PREDICTIONS_FILENAME: str = "predictions_test.parquet"
 
 ARTEFACTS: Dict[str, str] = {
     RAW_DATA_FILENAME: (
