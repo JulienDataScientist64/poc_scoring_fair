@@ -592,88 +592,35 @@ elif page == "Prédiction sur Client Sélectionné":
 # ——————————————————————————————————————————————————————————————
 # PAGE : Analyse Intersectionnelle
 # ——————————————————————————————————————————————————————————————
+# ——————————————————————————————————————————————————————————————
+# PAGE : Analyse Intersectionnelle (avec taux de refus et d’acceptation)
+# ——————————————————————————————————————————————————————————————
 elif page == "Analyse Intersectionnelle":
     st.header("🔀 Analyse Intersectionnelle")
     st.caption(
-        "Choisis une feature (catégorielle ou numérique) pour évaluer "
-        "les métriques de sélection et d’équité selon ses modalités / bins."
+        "Choisis une feature catégorielle pour évaluer les métriques "
+        "de refus/acceptation et d’équité selon ses modalités."
     )
 
     if df_merged is not None:
-        # 1. Lister les colonnes catégorielles et numériques
+        # 1. Lister uniquement les colonnes catégorielles (pas de numériques ici)
         categorical_cols = df_merged.select_dtypes(include=["object", "category"]).columns.tolist()
-        numeric_cols     = df_merged.select_dtypes(include=[np.number]).columns.tolist()
 
-        # Retirer les colonnes de labels/prédictions pour ne pas les proposer
+        # Retirer les colonnes techniques pour l’analyse
         for excl in ["y_true", "y_pred_baseline", "y_pred_eo", "proba_baseline", "proba_eo", "sensitive_feature"]:
             if excl in categorical_cols:
                 categorical_cols.remove(excl)
-            if excl in numeric_cols:
-                numeric_cols.remove(excl)
 
-        # 2. Choix du type de feature
-        chosen_type = st.radio("Type de feature à intersectionnaliser :", ["Catégorielle", "Numérique"])
-        if chosen_type == "Catégorielle":
-            chosen_col = st.selectbox("Choisis une colonne catégorielle :", [""] + categorical_cols)
-            if not chosen_col:
-                st.info("Sélectionne une colonne pour commencer.")
-                st.stop()
+        # 2. Choix de la colonne catégorielle
+        chosen_col = st.selectbox("Choisis une colonne catégorielle :", [""] + categorical_cols)
+        if not chosen_col:
+            st.info("Sélectionne une colonne pour commencer.")
+            st.stop()
 
-            modalities = df_merged[chosen_col].dropna().unique().tolist()
-            df_merged["INTERSECTION"] = df_merged[chosen_col].astype(str)
-            bin_labels = modalities
+        modalities = df_merged[chosen_col].dropna().unique().tolist()
 
-        else:
-            chosen_col = st.selectbox("Choisis une colonne numérique :", [""] + numeric_cols)
-            if not chosen_col:
-                st.info("Sélectionne une colonne pour commencer.")
-                st.stop()
-
-            # 2.1. Nombre de bins souhaités
-            n_bins = st.slider(
-                "Nombre de bins à créer pour cette variable :", min_value=2, max_value=10, value=5
-            )
-            # 2.2. Afficher min / max
-            col_min = float(df_merged[chosen_col].min())
-            col_max = float(df_merged[chosen_col].max())
-            st.write(f"Valeurs comprises entre {col_min:.2f} et {col_max:.2f}")
-
-            # 2.3. Créer les bins via pd.cut
-            try:
-                # On crée d’abord les bins, en récupérant leurs bornes
-                series_cut, bins = pd.cut(
-                    df_merged[chosen_col],
-                    bins=n_bins,
-                    retbins=True,
-                    labels=[f"{round(bins[i],2)}–{round(bins[i+1],2)}" for i in range(n_bins)],
-                    include_lowest=True,
-                )
-                df_merged["INTERSECTION"] = series_cut
-                bin_labels = df_merged["INTERSECTION"].dropna().unique().tolist()
-            except Exception as e:
-                st.error(f"Erreur lors de la création des bins : {e}")
-                st.stop()
-
-            st.write(f"Bins calculés ({n_bins}) pour '{chosen_col}':")
-            st.write(bins)
-
-        # 3. (Optionnel) Filtrage temporal/géographique
-        if "DATE" in df_merged.columns:
-            dates = pd.to_datetime(df_merged["DATE"], errors="coerce")
-            df_merged["ANNEE"] = dates.dt.year
-            years = sorted(df_merged["ANNEE"].dropna().unique().astype(int).tolist())
-            chosen_year = st.selectbox("Filtrer par année :", ["Toutes"] + [str(y) for y in years])
-            if chosen_year != "Toutes":
-                df_merged = df_merged[df_merged["ANNEE"] == int(chosen_year)]
-        if "REGION" in df_merged.columns:
-            regions = df_merged["REGION"].dropna().unique().tolist()
-            chosen_region = st.selectbox("Filtrer par région :", ["Toutes"] + regions)
-            if chosen_region != "Toutes":
-                df_merged = df_merged[df_merged["REGION"] == chosen_region]
-
-        # 4. Fonction utilitaire pour Gini
+        # 3. Fonction utilitaire pour le Gini (inchangé)
         def gini_coefficient(x: np.ndarray) -> float:
-            """Calcule le coefficient de Gini (x doit être ≥ 0)."""
             arr = np.array(x, dtype=float)
             if arr.size == 0 or np.all(arr == 0):
                 return np.nan
@@ -682,26 +629,26 @@ elif page == "Analyse Intersectionnelle":
             cumvals = np.cumsum(sorted_arr)
             return (1 + (1 / n) - 2 * np.sum(cumvals) / (cumvals[-1] * n))
 
-        # 5. Boucle par bin/ modalité
+        # 4. Boucle par modalité pour calculer les métriques
         results = []
-        for modal in bin_labels:
-            subset = df_merged[df_merged["INTERSECTION"] == modal]
+        for mod in modalities:
+            subset = df_merged[df_merged[chosen_col] == mod]
             if subset.empty:
                 continue
 
             y_true_mod   = subset["y_true"]
-            y_pred_b_mod = subset["y_pred_baseline"]
+            y_pred_b_mod = subset["y_pred_baseline"]  # 0 = accord, 1 = refus
             y_pred_e_mod = subset["y_pred_eo"]
             proba_e_mod  = subset["proba_eo"]
             sens_mod     = subset["sensitive_feature"]
 
-            # Taux de refus / d’acceptation
-            ref_base = float(np.mean(y_pred_b_mod))
+            # Taux de refus (selection_rate) et d’acceptation
+            ref_base = float(np.mean(y_pred_b_mod))       # proportion de 1 = refus
             acc_base = float(1.0 - ref_base)
             ref_eo   = float(np.mean(y_pred_e_mod))
             acc_eo   = float(1.0 - ref_eo)
 
-            # EOD / DPD pour EO
+            # EOD & DPD pour EO
             try:
                 eod_mod = float(equalized_odds_difference(
                     y_true_mod, y_pred_e_mod, sensitive_features=sens_mod
@@ -715,7 +662,7 @@ elif page == "Analyse Intersectionnelle":
             except Exception:
                 dpd_mod = np.nan
 
-            # Précision & recall pour EO
+            # Précision & rappel pour EO
             from sklearn.metrics import precision_score, recall_score
             try:
                 prec_mod = float(precision_score(y_true_mod, y_pred_e_mod, zero_division=0))
@@ -731,84 +678,103 @@ elif page == "Analyse Intersectionnelle":
                 gini_values[f"Gini_{grp}"] = float(gini_coefficient(scores_grp))
 
             results.append({
-                "Modalité/Bin":                     modal,
-                "Support":                          len(subset),
-                "Taux de refus Baseline":            ref_base,
-                "Taux d’acceptation Baseline":       acc_base,
-                "Taux de refus EO":                  ref_eo,
-                "Taux d’acceptation EO":             acc_eo,
-                "EOD EO":                           eod_mod,
-                "DPD EO":                           dpd_mod,
-                "Precision EO":                     prec_mod,
-                "Recall EO":                        rec_mod,
+                "Modalité":                        mod,
+                "Support":                         len(subset),
+                "Taux de refus Baseline":           ref_base,
+                "Taux d’acceptation Baseline":      acc_base,
+                "Taux de refus EO":                 ref_eo,
+                "Taux d’acceptation EO":            acc_eo,
+                "EOD EO":                          eod_mod,
+                "DPD EO":                          dpd_mod,
+                "Precision EO":                    prec_mod,
+                "Recall EO":                       rec_mod,
                 **gini_values
             })
 
-        # 6. DataFrame de synthèse
-        df_inter = pd.DataFrame(results).set_index("Modalité/Bin")
-        st.subheader(f"Métriques par modalité/bin de '{chosen_col}'")
-        st.dataframe(df_inter.style.format({col: "{:.3f}" for col in df_inter.columns}), use_container_width=True)
+        # 5. DataFrame de synthèse
+        df_inter = pd.DataFrame(results).set_index("Modalité")
+        st.subheader(f"Métriques par modalité de '{chosen_col}'")
+        st.dataframe(df_inter.style.format({col: "{:.3f}" for col in df_inter.columns}),
+                     use_container_width=True)
 
-        # 7. Barplot du taux d’acceptation
+        # 6. Graphique : Taux d’acceptation
         df_sel_plot = df_inter.reset_index().melt(
-            id_vars=["Modalité/Bin"],
+            id_vars=["Modalité"],
             value_vars=["Taux d’acceptation Baseline", "Taux d’acceptation EO"],
             var_name="Modèle",
             value_name="Taux d’acceptation",
         )
         fig_sel = px.bar(
             df_sel_plot,
-            x="Modalité/Bin",
+            x="Modalité",
             y="Taux d’acceptation",
             color="Modèle",
             barmode="group",
-            title=f"Taux d’acceptation par modalité/bin de '{chosen_col}'",
-            labels={"Modalité/Bin": chosen_col},
+            title=f"Taux d’acceptation par modalité de '{chosen_col}'",
+            labels={"Modalité": chosen_col},
         )
         st.plotly_chart(fig_sel, use_container_width=True)
 
-        # 8. Barplot EOD
+        # 7. Graphique : Taux de refus
+        df_ref_plot = df_inter.reset_index().melt(
+            id_vars=["Modalité"],
+            value_vars=["Taux de refus Baseline", "Taux de refus EO"],
+            var_name="Modèle",
+            value_name="Taux de refus",
+        )
+        fig_ref = px.bar(
+            df_ref_plot,
+            x="Modalité",
+            y="Taux de refus",
+            color="Modèle",
+            barmode="group",
+            title=f"Taux de refus par modalité de '{chosen_col}'",
+            labels={"Modalité": chosen_col},
+        )
+        st.plotly_chart(fig_ref, use_container_width=True)
+
+        # 8. Graphique : EOD pour EO
         fig_eod = px.bar(
             df_inter.reset_index(),
-            x="Modalité/Bin",
+            x="Modalité",
             y="EOD EO",
-            title=f"EOD (EO mitigé) par modalité/bin de '{chosen_col}'",
+            title=f"EOD (EO mitigé) par modalité de '{chosen_col}'",
             labels={"EOD EO": "Equalized Odds Diff (EO)"},
         )
         st.plotly_chart(fig_eod, use_container_width=True)
 
-        # 9. Barplot DPD
+        # 9. Graphique : DPD pour EO
         fig_dpd = px.bar(
             df_inter.reset_index(),
-            x="Modalité/Bin",
+            x="Modalité",
             y="DPD EO",
-            title=f"DPD (EO mitigé) par modalité/bin de '{chosen_col}'",
+            title=f"DPD (EO mitigé) par modalité de '{chosen_col}'",
             labels={"DPD EO": "Demographic Parity Diff (EO)"},
         )
         st.plotly_chart(fig_dpd, use_container_width=True)
 
-        # 10. Barplot Precision & Recall pour EO
+        # 10. Graphique : Précision & Recall pour EO
         df_prrec = df_inter[["Precision EO", "Recall EO"]].reset_index().melt(
-            id_vars=["Modalité/Bin"],
+            id_vars=["Modalité"],
             value_vars=["Precision EO", "Recall EO"],
             var_name="Métrique",
             value_name="Score",
         )
         fig_prrec = px.bar(
             df_prrec,
-            x="Modalité/Bin",
+            x="Modalité",
             y="Score",
             color="Métrique",
             barmode="group",
-            title=f"Precision & Recall (EO) par modalité/bin de '{chosen_col}'",
-            labels={"Modalité/Bin": chosen_col, "Score": "Valeur"},
+            title=f"Precision & Recall (EO) par modalité de '{chosen_col}'",
+            labels={"Modalité": chosen_col, "Score": "Valeur"},
         )
         st.plotly_chart(fig_prrec, use_container_width=True)
 
-        # 11. Distribution des probabilités EO par groupe (optionnel)
-        if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité/bin"):
-            for modal in df_inter.index:
-                subset = df_merged[df_merged["INTERSECTION"] == modal]
+        # 11. (Optionnel) Distribution des probabilités EO
+        if st.checkbox("Afficher distribution des probabilités EO par groupe pour chaque modalité"):
+            for mod in df_inter.index:
+                subset = df_merged[df_merged[chosen_col] == mod]
                 if subset.empty:
                     continue
                 fig_hist = px.histogram(
@@ -817,16 +783,17 @@ elif page == "Analyse Intersectionnelle":
                     color="sensitive_feature",
                     nbins=30,
                     barmode="overlay",
-                    title=f"Distribution des scores EO pour '{chosen_col}' = '{modal}'",
+                    title=f"Distribution des scores EO pour '{chosen_col}' = '{mod}'",
                     labels={"proba_eo": "Score EO", "sensitive_feature": "Groupe sensible"},
                 )
                 st.plotly_chart(fig_hist, use_container_width=True)
 
-        # 12. Matrice de confusion EO par modalité/bin (optionnel)
-        if st.checkbox("Afficher la matrice de confusion EO pour chaque modalité/bin"):
+        # 12. (Optionnel) Matrice de confusion EO par modalité
+        if st.checkbox("Afficher la matrice de confusion EO pour chaque modalité"):
             from sklearn.metrics import confusion_matrix
-            for modal in df_inter.index:
-                subset = df_merged[df_merged["INTERSECTION"] == modal]
+
+            for mod in df_inter.index:
+                subset = df_merged[df_merged[chosen_col] == mod]
                 if subset.empty:
                     continue
                 y_true_mod   = subset["y_true"]
@@ -838,13 +805,13 @@ elif page == "Analyse Intersectionnelle":
                     cm, x=labels_cm, y=labels_cm, annotation_text=z_text, colorscale="Purples"
                 )
                 fig_cm.update_layout(
-                    title_text=f"Matrice de confusion EO pour '{chosen_col}' = '{modal}'",
+                    title_text=f"Matrice de confusion EO pour '{chosen_col}' = '{mod}'",
                     xaxis_title="Prédit",
                     yaxis_title="Réel",
                 )
                 st.plotly_chart(fig_cm, use_container_width=True)
 
-        # 13. Export Excel
+        # 13. (Optionnel) Export au format Excel
         buffer = None
         if st.button("📥 Exporter ce tableau au format Excel"):
             import io
@@ -859,11 +826,10 @@ elif page == "Analyse Intersectionnelle":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-        # 14. Injection de biais artificiel (inchangée)
-        # … (le code existant sans modification) …
-
+        # 14. Injection de biais artificiel (inchangé) …
     else:
         st.warning("Fusion des données application + prédictions impossible.")
+
 
 
 # ——————————————————————————————————————————————————————————————
